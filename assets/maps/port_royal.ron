@@ -1,0 +1,108 @@
+// Port Royal and the approaches to Kingston Harbour, Jamaica, c. 1715.
+//
+// Coordinates are (latitude, longitude) in degrees, eyeballed from modern
+// geography as a first pass. Refine against real coastline data later.
+// Historical notes:
+//   - Port Royal sits on the western tip of the Palisadoes, a long sand spit
+//     enclosing Kingston Harbour. The 1692 earthquake sank much of the town,
+//     and a fire in 1703 burned most of the rest. By 1715 it is a smaller
+//     town and the Royal Navy's base in the Caribbean.
+//   - Kingston, founded in 1692 on the harbour's north shore, is growing into
+//     the island's commercial port.
+//   - The Port Royal Cays lie off the point. Rackham's Cay is named for
+//     "Calico Jack" Rackham, whose body was gibbeted there in 1720.
+(
+    name: "Port Royal",
+    origin: (17.9372, -76.8435),
+    // Geography is drawn at half real size so passages take minutes, not hours.
+    // Ships stay true scale. See the creative-license log in docs/DESIGN.md.
+    distance_scale: 0.5,
+    // South of the cays, running west before the trade wind toward the point.
+    player_start: (
+        position: (17.9050, -76.7900),
+        heading_degrees: 270.0,
+    ),
+    land: [
+        (
+            name: "Jamaica",
+            terrain: Forest,
+            label: Some((17.9900, -76.8200)),
+            outline: [
+                // South coast, west to east: Hellshire, Port Henderson,
+                // the harbour's north shore past Kingston, then east of the harbour.
+                (17.8800, -77.0000), (17.8680, -76.9600), (17.8720, -76.9350),
+                (17.8950, -76.9120), (17.9200, -76.8950), (17.9420, -76.8820),
+                (17.9550, -76.8720), (17.9580, -76.8580), (17.9560, -76.8460),
+                (17.9620, -76.8380), (17.9660, -76.8260), (17.9700, -76.8100),
+                (17.9680, -76.7900), (17.9660, -76.7700), (17.9620, -76.7550),
+                (17.9600, -76.7400), (17.9620, -76.7250), (17.9660, -76.7120),
+                (17.9620, -76.7000), (17.9500, -76.6850), (17.9400, -76.6650),
+                // Inland boundary, off the edge of the playable map.
+                (18.0200, -76.6650), (18.0200, -77.0000),
+            ],
+        ),
+        (
+            name: "The Palisadoes",
+            terrain: Sand,
+            label: Some((17.9365, -76.7900)),
+            outline: [
+                // South (seaward) shore, from Port Royal point east to the mainland.
+                (17.9355, -76.8445), (17.9340, -76.8400), (17.9325, -76.8300),
+                (17.9310, -76.8150), (17.9320, -76.8000), (17.9335, -76.7900),
+                (17.9370, -76.7750), (17.9430, -76.7600), (17.9500, -76.7450),
+                (17.9570, -76.7300), (17.9630, -76.7150), (17.9665, -76.7080),
+                // North (harbour) shore, back west to the point.
+                (17.9685, -76.7120), (17.9650, -76.7200), (17.9590, -76.7340),
+                (17.9520, -76.7490), (17.9455, -76.7630), (17.9410, -76.7760),
+                (17.9400, -76.7900), (17.9375, -76.8000), (17.9365, -76.8150),
+                (17.9370, -76.8300), (17.9395, -76.8370), (17.9400, -76.8425),
+                (17.9380, -76.8455),
+            ],
+        ),
+        (
+            name: "Rackham's Cay",
+            terrain: Sand,
+            label: None,
+            outline: [(17.92687, -76.83443), (17.92718, -76.83494), (17.92702, -76.83570), (17.92670, -76.83649), (17.92618, -76.83641), (17.92586, -76.83603), (17.92583, -76.83525), (17.92635, -76.83476)],
+        ),
+        (
+            name: "Gun Cay",
+            terrain: Sand,
+            label: None,
+            outline: [(17.92524, -76.82047), (17.92583, -76.82046), (17.92610, -76.82133), (17.92622, -76.82217), (17.92580, -76.82266), (17.92525, -76.82228), (17.92471, -76.82172), (17.92485, -76.82090)],
+        ),
+        (
+            name: "Lime Cay",
+            terrain: Sand,
+            label: None,
+            outline: [(17.91787, -76.81581), (17.91878, -76.81635), (17.91894, -76.81827), (17.91805, -76.81966), (17.91703, -76.82083), (17.91630, -76.81955), (17.91628, -76.81777), (17.91677, -76.81577)],
+        ),
+        (
+            name: "Maiden Cay",
+            terrain: Sand,
+            label: None,
+            outline: [(17.91471, -76.80344), (17.91495, -76.80415), (17.91458, -76.80493), (17.91401, -76.80569), (17.91341, -76.80539), (17.91309, -76.80484), (17.91326, -76.80395), (17.91399, -76.80362)],
+        ),
+        (
+            name: "Southeast Cay",
+            terrain: Sand,
+            label: None,
+            outline: [(17.91161, -76.79262), (17.91216, -76.79243), (17.91263, -76.79319), (17.91272, -76.79396), (17.91252, -76.79468), (17.91188, -76.79433), (17.91133, -76.79383), (17.91115, -76.79296)],
+        ),
+        (
+            name: "Drunkenman's Cay",
+            terrain: Sand,
+            label: None,
+            outline: [(17.90470, -76.82257), (17.90465, -76.82309), (17.90436, -76.82366), (17.90375, -76.82363), (17.90329, -76.82343), (17.90321, -76.82289), (17.90373, -76.82251), (17.90431, -76.82221)],
+        ),
+    ],
+    ports: [
+        (
+            name: "Port Royal",
+            nation: "England",
+            town: (17.9378, -76.8405),
+            // The anchorage inside the harbour, off the town's north shore.
+            anchorage: (17.9435, -76.8405),
+        ),
+    ],
+)

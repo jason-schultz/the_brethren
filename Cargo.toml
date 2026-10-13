@@ -1,0 +1,35 @@
+[package]
+name = "the_brethren"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+
+[dependencies]
+bevy = "0.20"
+earcut = "0.4"
+ron = "0.12"
+serde = { version = "1", features = ["derive"] }
+
+[features]
+# Faster incremental builds during development: `cargo run --features dev`.
+# Never ship with this enabled.
+dev = ["bevy/dynamic_linking"]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+# Bevy systems routinely take many params and complex query types.
+too_many_arguments = "allow"
+type_complexity = "allow"
+
+# Optimize our code a little in dev, and dependencies (Bevy) fully.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
