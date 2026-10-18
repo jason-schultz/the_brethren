@@ -1,0 +1,32 @@
+// Everything ships carry, c. 1716.
+//
+// Prices are in pieces of eight (Spanish dollars), the common coin of the
+// West Indies, per ton of freight or per head. A base price is what a market
+// asks when it holds exactly the stock it wants. Values are rough period
+// figures converted at about 4.4 pieces of eight to the pound sterling, then
+// rounded for play.
+[
+    // Ships' stores and colonial necessities, mostly shipped in from
+    // New England, Ireland, and London.
+    (key: "provisions", name: "Provisions", base_price: 45.0, carriage: Hold),
+    (key: "timber", name: "Timber", base_price: 15.0, carriage: Hold),
+    (key: "naval_stores", name: "Naval Stores", base_price: 120.0, carriage: Hold),
+    (key: "manufactures", name: "Manufactured Goods", base_price: 260.0, carriage: Hold),
+    (key: "munitions", name: "Munitions", base_price: 300.0, carriage: Hold),
+    (key: "salt", name: "Salt", base_price: 20.0, carriage: Hold),
+
+    // West Indian produce.
+    (key: "sugar", name: "Sugar", base_price: 65.0, carriage: Hold),
+    (key: "rum", name: "Rum", base_price: 90.0, carriage: Hold),
+    (key: "molasses", name: "Molasses", base_price: 40.0, carriage: Hold),
+    (key: "pimento", name: "Pimento", base_price: 250.0, carriage: Hold),
+    (key: "ginger", name: "Ginger", base_price: 120.0, carriage: Hold),
+    (key: "indigo", name: "Indigo", base_price: 1500.0, carriage: Hold),
+    (key: "hides", name: "Hides", base_price: 150.0, carriage: Hold),
+    (key: "logwood", name: "Logwood", base_price: 80.0, carriage: Hold),
+
+    // People. Sailors sign on for a bounty at the tavern. Soldiers travel
+    // only under contract, so their price is never asked.
+    (key: "sailors", name: "Sailors", base_price: 10.0, carriage: Berths),
+    (key: "soldiers", name: "Soldiers", base_price: 0.0, carriage: Berths),
+]

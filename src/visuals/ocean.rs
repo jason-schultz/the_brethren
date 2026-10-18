@@ -5,8 +5,8 @@ use bevy::prelude::*;
 use crate::player::Player;
 
 /// Half-width of the ocean surface, meters. Large enough that its edge is
-/// never seen at max zoom on the first map.
-const OCEAN_HALF_SIZE: f32 = 100_000.0;
+/// never seen at max zoom on the West Indies map.
+const OCEAN_HALF_SIZE: f32 = 3_000_000.0;
 /// Reference grid spacing, meters. Gives a sense of motion on open water.
 const GRID_SPACING: f32 = 100.0;
 const GRID_CELLS: u32 = 80;

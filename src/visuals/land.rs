@@ -11,6 +11,8 @@ use crate::map::data::Terrain;
 
 /// Height of the land surface above the water, meters.
 const LAND_HEIGHT: f32 = 0.5;
+/// Shoals sit just above the water, under any land drawn on them.
+const SHOAL_HEIGHT: f32 = 0.1;
 /// Place names float this high over the land so they stay readable at an angle.
 const LABEL_HEIGHT: f32 = 10.0;
 /// Texture-coordinate scale for land meshes (one UV unit per this many meters).
@@ -47,15 +49,22 @@ fn rebuild_land(
         perceptual_roughness: 0.95,
         ..default()
     });
+    let shoal = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.35, 0.75, 0.75, 0.55),
+        alpha_mode: AlphaMode::Blend,
+        perceptual_roughness: 0.4,
+        ..default()
+    });
     for mass in &land.masses {
         let material = match mass.terrain {
             Terrain::Sand => sand.clone(),
             Terrain::Forest => forest.clone(),
+            Terrain::Shoal => shoal.clone(),
         };
         commands.spawn((
             LandVisual,
             Name::new(mass.name.clone()),
-            Mesh3d(meshes.add(land_mesh(&mass.outline))),
+            Mesh3d(meshes.add(land_mesh(&mass.outline, height(mass.terrain)))),
             MeshMaterial3d(material),
         ));
         commands.spawn((
@@ -69,9 +78,16 @@ fn rebuild_land(
     }
 }
 
-/// A flat, upward-facing mesh filling `outline` at land height.
-fn land_mesh(outline: &[Vec2]) -> Mesh {
-    let positions: Vec<[f32; 3]> = outline.iter().map(|p| [p.x, LAND_HEIGHT, p.y]).collect();
+fn height(terrain: Terrain) -> f32 {
+    match terrain {
+        Terrain::Sand | Terrain::Forest => LAND_HEIGHT,
+        Terrain::Shoal => SHOAL_HEIGHT,
+    }
+}
+
+/// A flat, upward-facing mesh filling `outline` at `height` above the water.
+fn land_mesh(outline: &[Vec2], height: f32) -> Mesh {
+    let positions: Vec<[f32; 3]> = outline.iter().map(|p| [p.x, height, p.y]).collect();
     let uvs: Vec<[f32; 2]> = outline
         .iter()
         .map(|p| (*p / UV_METERS).to_array())

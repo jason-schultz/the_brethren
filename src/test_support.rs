@@ -1,15 +1,23 @@
 //! Shared helpers for headless simulation tests.
 
+use std::time::Duration;
+
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 
 use crate::SimulationPlugin;
+use crate::time_scale::MAX_STEP;
 
 /// A headless app running the simulation. Each `update()` advances exactly one fixed step.
 pub fn sim_app() -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, SimulationPlugin))
         .insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
+    // Virtual time normally clamps each frame to 250 ms, which would let a
+    // test with long fixed steps run only one step every few updates.
+    app.world_mut()
+        .resource_mut::<Time<Virtual>>()
+        .set_max_delta(Duration::from_secs_f64(MAX_STEP * 2.0));
     app
 }
 
@@ -20,6 +28,15 @@ pub fn run_seconds(app: &mut App, seconds: f32) {
 
 /// Advances the app by `seconds`, calling `check` with the world after every fixed step.
 pub fn run_checked(app: &mut App, seconds: f32, mut check: impl FnMut(&World)) {
+    run_until(app, seconds, |world| {
+        check(world);
+        false
+    });
+}
+
+/// Advances the app one fixed step at a time until `done` returns true or
+/// `seconds` have passed. Returns whether `done` was reached.
+pub fn run_until(app: &mut App, seconds: f32, mut done: impl FnMut(&World) -> bool) -> bool {
     let step = app
         .world()
         .resource::<Time<Fixed>>()
@@ -27,6 +44,9 @@ pub fn run_checked(app: &mut App, seconds: f32, mut check: impl FnMut(&World)) {
         .as_secs_f32();
     for _ in 0..(seconds / step).ceil() as u32 {
         app.update();
-        check(app.world());
+        if done(app.world()) {
+            return true;
+        }
     }
+    false
 }

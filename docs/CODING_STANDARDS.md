@@ -56,12 +56,15 @@ src/
   math.rs          # Angle/heading conventions, unit conversions, plane mapping
   geometry.rs      # 2D polygon algorithms on the ocean plane
   schedule.rs      # Shared SystemSets and their ordering
-  <domain>/        # Simulation domains: sailing, navigation, map, port, ...
+  ship_class.rs    # Ship classes: the one way to build a ship
+  <domain>/        # Simulation domains: sailing, navigation, map, economy, ...
     mod.rs         #   The domain's Plugin, components, messages, systems
     *.rs           #   Pure logic (physics, course, route) with unit tests
+  <domain>.rs      # Small domains in one file: clock, goods, cargo, crew, port
   visuals/         # 3D presentation: reads the simulation, never writes it
   ui/              # Screen UI: changes the simulation only by sending messages
 assets/maps/       # Map data (RON)
+assets/data/       # Other game data (RON): goods
 ```
 
 - **The simulation can run headless.** `SimulationPlugin` must work with
@@ -77,6 +80,13 @@ assets/maps/       # Map data (RON)
   with no Bevy `Query` or `Res` parameters. Systems are thin adapters that
   fetch data, call the pure function, and write the result back. This keeps
   logic trivially testable.
+- **Rules are checked in one place.** When the UI must know whether an
+  order will succeed (to show or hide a button), it calls the same function
+  the simulation uses to validate that order, such as `market::quote` or
+  `jobs::check_acceptance`. Never re-implement a rule for display.
+- **Quantities that accumulate use `f64`.** Stock, cargo, and the clock
+  change by tiny amounts each fixed step, and `f32` silently drops them.
+  Positions and physics stay `f32`.
 - **Visibility is minimal.** Items are private unless another module needs
   them. Use `pub(crate)` over `pub` unless the item is part of the
   library's API.
@@ -124,6 +134,11 @@ assets/maps/       # Map data (RON)
   knots or degrees only for display.
 - **Frame-rate independence:** all simulation uses the fixed timestep's
   `delta_secs()`. Never use per-frame constants.
+- **Step-size independence:** time compression stretches the fixed step up
+  to `time_scale::MAX_STEP` (2 s). Simulation code must behave the same at
+  1/64 s and at 2 s, and long-voyage tests run at `MAX_STEP`. Anything that
+  fires on a threshold uses `alert::fell_below` on the crossing, so it fires
+  once whatever the step.
 - **Data-driven content:** ship classes, goods, ports, and factions will be
   defined as data (RON assets), not hard-coded match arms, once they exist.
 - **Determinism where cheap:** simulation should not depend on frame rate

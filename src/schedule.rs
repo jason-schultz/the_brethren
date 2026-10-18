@@ -7,16 +7,22 @@ use bevy::prelude::*;
 pub enum SimSet {
     /// Turn standing orders into helm commands.
     Navigation,
+    /// Battle: tactics take the helm, and broadsides fire.
+    Combat,
     /// Integrate ship motion.
     Physics,
-    /// React to what happened this step (arrivals, docking).
+    /// React to what happened this step (arrivals, docking, eating).
     Resolve,
+    /// Markets, contracts, and deliveries, once ships have docked.
+    Economy,
 }
 
 /// Per-frame phases, run in `Update` in this order. These keep running while paused.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameSet {
-    /// Read raw input and emit order messages.
+    /// Turn key presses into controls.
+    Controls,
+    /// Read controls and the mouse, and emit order messages.
     Input,
     /// Record orders as standing order state on entities.
     Orders,
@@ -26,7 +32,17 @@ pub enum FrameSet {
 pub(crate) fn configure_sets(app: &mut App) {
     app.configure_sets(
         FixedUpdate,
-        (SimSet::Navigation, SimSet::Physics, SimSet::Resolve).chain(),
+        (
+            SimSet::Navigation,
+            SimSet::Combat,
+            SimSet::Physics,
+            SimSet::Resolve,
+            SimSet::Economy,
+        )
+            .chain(),
     )
-    .configure_sets(Update, (FrameSet::Input, FrameSet::Orders).chain());
+    .configure_sets(
+        Update,
+        (FrameSet::Controls, FrameSet::Input, FrameSet::Orders).chain(),
+    );
 }

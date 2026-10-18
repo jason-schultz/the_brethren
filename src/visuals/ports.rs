@@ -48,8 +48,33 @@ impl FromWorld for PortAssets {
     }
 }
 
+/// A port's name label, which shows its flag.
+#[derive(Component)]
+struct PortLabel(Entity);
+
 pub(super) fn plugin(app: &mut App) {
-    app.init_resource::<PortAssets>().add_observer(build_town);
+    app.init_resource::<PortAssets>()
+        .add_observer(build_town)
+        .add_systems(Update, relabel_ports);
+}
+
+fn label_text(name: &Name, port: &Port) -> String {
+    format!("{}\n{}", name, port.flag)
+}
+
+/// A port that changes hands shows its new flag.
+fn relabel_ports(
+    ports: Query<(&Name, &Port), Changed<Port>>,
+    mut labels: Query<(&PortLabel, &mut Text)>,
+) {
+    for (label, mut text) in &mut labels {
+        if let Ok((name, port)) = ports.get(label.0) {
+            let shown = label_text(name, port);
+            if text.0 != shown {
+                text.0 = shown;
+            }
+        }
+    }
 }
 
 /// Builds the town and pier as children of the port, whose origin is the anchorage.
@@ -87,9 +112,12 @@ fn build_town(
         ChildOf(add.entity),
     ));
 
-    commands.spawn(world_label(
-        format!("{}\n{}", name, port.nation),
-        port.town.with_y(LABEL_HEIGHT),
-        LabelStyle::Port,
+    commands.spawn((
+        PortLabel(add.entity),
+        world_label(
+            label_text(name, port),
+            port.town.with_y(LABEL_HEIGHT),
+            LabelStyle::Port,
+        ),
     ));
 }

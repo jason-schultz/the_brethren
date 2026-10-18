@@ -1,6 +1,6 @@
 # The Brethren
 
-Single-player Age-of-Sail sandbox game. Rust + Bevy 0.20, 3D with a top-down camera, macOS.
+Single-player Age-of-Sail sandbox game. Rust + Bevy 0.20, 3D with a top-down camera, macOS first (Windows and Linux builds too).
 
 **Read before any change:**
 - `docs/CODING_STANDARDS.md`: mandatory rules (one hot path, no duplicated logic, KISS, testing).
@@ -14,6 +14,10 @@ cargo test                                     # all tests
 cargo clippy --all-targets -- -D warnings      # lint
 cargo fmt --check                              # format check
 ```
+
+Releases: push a `v*` tag and `.github/workflows/release.yml` builds macOS
+(universal `.app`), Windows and Linux downloads and publishes them as a GitHub
+release. Running it by hand from the Actions tab builds without releasing.
 
 ## Key rules (summary; the standards doc is authoritative)
 

@@ -24,9 +24,8 @@ of brothers in a navy crew.
 
 ### Pillars
 
-1. **Sailing is the core.** Wind, points of sail, and seamanship decide
-   travel and combat. If moving a ship around doesn't feel good, nothing else
-   matters.
+1. **Sailing is the core.** Wind and seamanship decide travel and combat.
+   If moving a ship around doesn't feel good, nothing else matters.
 2. **Factions are made of people.** Umbrella factions are coalitions of
    guilds, companies, and squadrons. Their internal politics matter as much
    as the wars between them.
@@ -38,22 +37,56 @@ of brothers in a navy crew.
    things, and so can the NPCs, to the player.
 5. **Grounded in history.** Real Earth, real ports, real ship types, and a
    real-ish economy. We take creative license only where it makes the game
-   better, and we write that license down (see §9).
+   better, and we write that license down (see §9). When realism and fun
+   conflict, fun wins: this is a game, not a simulator.
 
 ---
 
 ## 2. Presentation & Controls
 
-- **3D world, top-down camera.** Free pan/zoom over the ocean, with a strategy
-  feel similar to EVE's overview. It is not a first-person helm.
+- **3D world, top-down camera.** Free pan and zoom over the ocean, with a
+  strategy feel similar to EVE's overview. It is not a first-person helm.
+  The camera follows the player's ship until the captain looks away: WASD
+  or the arrow keys pan, dragging with the left button moves the map, and
+  scrolling zooms toward the cursor. F returns to the ship.
 - **Click to sail.** The player issues orders such as "sail to here",
   "follow", "engage", or "dock". The ship's crew carries them out under the
   constraints of wind and seamanship.
-- **Pausable real time.** Space toggles pause. Orders can be issued while
-  paused. Time acceleration is planned for long passages.
-- **Single player, local only** (macOS first). There is no offline
+- **Pausable real time with time compression.** Space toggles pause, and
+  minus and equals step the speed, or the top bar's buttons pick one:
+  1×, 10×, 60×, 600×, and 5,400× (an hour and a
+  half of game time every real second). Orders can be issued while paused.
+  See §2.2.
+- **Single player, local only** (macOS first, with builds for Windows
+  and Linux too). There is no offline
   progression: the world only advances while the game is running and
   unpaused.
+
+- **The HUD keeps to the edges.** A slim top bar has the date, the time
+  buttons, heading and speed, wind, purse, crew and morale, days of
+  stores, and warnings (paused, wanted, starving). Passing messages stack
+  on the right and fade; a call that stops the clock stays pinned until
+  the captain resumes. A battle box shows only while engaged.
+- **Action bar and menu.** Along the bottom, an action bar (fire port,
+  fire starboard, board, battle style, follow ship, on keys 1 to 5) and a
+  menu of panels: Captain (C), Crew (R), Hold (H), Fleet (Tab), Nations
+  (N), and Controls (F1), plus the influence overlay (M). Clicking a
+  button and pressing its key are the same control. One panel is open at
+  a time; its key or Escape closes it.
+- **Spheres of influence.** M washes the sea in each nation's colour where
+  it holds sway (England red, Spain gold, the Brethren bone white), with a
+  legend at the bottom left. A nation holds the sea around its ports,
+  farther the more loyal they are, and the lanes its ships keep sailing:
+  wakes build where its ships pass, patrols counting triple, and fade by
+  half every three days. Allies' and rivals' colours mix where they share
+  the sea. Ship markers take their nation's colour.
+- **Rebindable keys.** The Controls panel rebinds any control's key;
+  binding a taken key swaps the two. Bindings are kept in
+  `keys.txt` beside the quicksave. WASD, the arrow keys, and Escape are
+  fixed.
+- **The captain's portrait.** The Captain panel shows him standing on the
+  quay beside his ship, rendered live from simple shapes, above the ship's
+  and captain's particulars. Real art can replace it later.
 
 ### 2.1 In Port (decided)
 
@@ -69,6 +102,27 @@ Each location offers the jobs that fit who works there (§5.3): the
 governor's house gives military and diplomatic work, the merchants'
 exchange gives commercial hauls, and the tavern gives the work nobody
 signs for.
+
+### 2.2 Long Passages (decided)
+
+Long passages are fast-forwarded, not skipped. The world keeps running
+underneath, so the sea is still where things happen.
+
+- **Time compression.** At top speed the 30-hour passage from Port Royal to
+  Nassau takes about 20 seconds.
+- **Zoom out to the chart.** Scrolling out shows the whole sea, with ship
+  markers sized to stay visible. Time speed never moves the camera. (It
+  used to pull out to the chart automatically at 600×, which surprised
+  players.) Ports can be clicked to dock from any zoom.
+- **Alerts wake the captain.** Arriving or sighting a sail drops the game to
+  1×. Ships lying in port aren't sighted. Anything that needs a decision
+  drops it to 1× and pauses: running aground, provisions down to three
+  days, or a contract due within a day. The HUD shows the call until the
+  captain resumes or picks a speed.
+- **The simulation holds up at speed.** The fixed step grows from 1/64 s up
+  to 2 s at high speed, so 5,400× needs 2,700 steps a second instead of
+  over 300,000. Tests sail the whole Port Royal to Nassau passage at the 2 s
+  step.
 
 ---
 
@@ -136,6 +190,9 @@ chartered ventures.
 
 ### 4.4 Relationships
 
+Built so far for nations (§5.7): every pair of nations has relations from
+−100 to 100, moved by what their ships do to each other.
+
 | | Nations | Companies | Pirates |
 |---|---|---|---|
 | **Nations** | rival crowns at war or uneasy peace | partners and tax base | hunt them, or hire them as privateers |
@@ -159,9 +216,9 @@ chartered ventures.
 
 | System | Summary |
 |---|---|
-| **Sailing** | True wind, apparent wind, points of sail, and a per-hull speed polar. Ships cannot sail into the wind and must tack. Turning rate depends on speed. |
-| **Navigation** | Orders (move, follow, dock, engage). The crew executes them with automatic tacking around the no-go zone. |
-| **Combat** | Broadside arcs, reload time, shot types (round, chain, grape), and separate damage to hull, rigging, and crew. Boarding and capture. Holding the weather gage matters. |
+| **Sailing** | Ships sail straight on any heading. The wind is a speed modifier: a little slower into it, a little faster before it, set per hull. No tacking: realistic, but it made passages tedious. Turning rate depends on speed. |
+| **Navigation** | Orders (move, follow, dock, engage). The crew steers each leg of a route planned around land. |
+| **Combat** | Built (§5.5): broadside arcs, reload time, separate damage to hull, rigging, and crew, boarding, and prizes, in three battle styles. Later: shot types (round, chain, grape), and holding the weather gage. |
 | **Ports** | Docking, markets, shipyards, taverns (crew), and faction offices (contracts, commissions, fences). |
 | **Economy** | Goods with per-port supply and demand. Prices respond to trade flows. Regional specialties include sugar, rum, tobacco, spice, cloth, and slaves. Slaves are handled as historical context, not as a player commodity; see §9. |
 | **Crew** | Head count, skill, morale, and loyalty. Wages and shares. This drives mutiny. |
@@ -170,19 +227,35 @@ chartered ventures.
 | **World AI** | NPC captains and groups pursue their own goals (trade, patrol, raid) while the game runs. |
 | **Progression** | Money buys and outfits ships, from sloop to brig to frigate and beyond. Rank and influence come from standing. Fleets come later. |
 
-### 5.1 Ships and Crew (proposed)
+### 5.1 Ships and Crew (built)
 
 Every ship, the player's included, runs on the same rules.
 
 - **Crew requirement.** Each hull has a *minimum crew* to work the ship
   day to day and a *full crew* to also fight her guns. Below the minimum,
-  sail handling suffers: slower speed, slower turns, slower tacks. Below a
+  sail handling suffers: slower speed and slower turns. Below a
   skeleton crew, she can't make sail at all.
 - **Berths.** Each hull has a maximum number of people aboard, crew and
   passengers combined.
-- **Provisions.** Everyone aboard eats and drinks each day (food, water,
-  rum). A crowded ship burns through stores fast. Running out hurts morale
-  first, then lives. This also drives mutiny (§4.5).
+- **Provisions.** Everyone aboard eats 5 kg of provisions (food and
+  water) a day. A crowded ship burns through stores fast. A starving crew
+  loses a tenth of its men each day, and its morale collapses.
+- **Morale** runs from 0 to 100, in five bands: mutinous (under 20),
+  sullen, steady, content, and eager (80 and over). A new crew is steady.
+  - It settles 4 points a day toward a resting level: 60 in port, 45 at
+    sea (a quartermaster adds 10). A starving crew loses 15 a day instead.
+  - Taking a prize lifts it 15, plundering 10, and an enemy striking or
+    sinking 5. Being thrown back from a boarding costs 10, and losses cost
+    in proportion: losing a quarter of the men costs 10.
+  - A run ashore at a tavern costs 3 pieces of eight a man and lifts it 25.
+  - Sullen and mutinous men work slowly (sailing and reloading at 90% and
+    80%), and desert in port, a tenth a day. Eager men work at 110%.
+  - Low morale is what makes a mutiny possible (§5.9).
+- **Hiring.** Sailors sign on at the tavern for a bounty. Each port has its
+  own pool of men, which refills over time. Nassau has plenty.
+- **The sloop** needs 8 hands, 40 to fight, and has 75 berths and a
+  40-ton hold. The player starts with 12 men, 2 tons of provisions (about a
+  month), and 500 pieces of eight.
 - **Built-in asymmetry.** Historically, merchantmen sailed lean to save
   wages: a trading sloop carried around 10 to 15 men. A pirate sloop of the
   same size crammed in 70 to 100, which was enough to swarm a boarding but
@@ -190,18 +263,21 @@ Every ship, the player's included, runs on the same rules.
   same rules produce this naturally: a big crew wins fights and starves; a
   small crew pays well and can't defend itself.
 
-### 5.2 Cargo (proposed)
+### 5.2 Cargo (built)
 
-- **Hold capacity in tons** (burthen), per hull. Every good has a weight
-  per unit, so a hold fills with ten tons of sugar or ten tons of sandstone
-  equally. Valuable, light goods such as spice, silver, and indigo are what
-  make a small, fast ship profitable.
-- **Goods are data** (RON): name, weight, base value, category (food,
-  luxury, building material, naval stores, munitions, and so on).
-- **People are not cargo.** Soldiers, colonists, and diplomats take
-  berths, not hold space, and eat provisions on the way.
+- **Hold capacity in tons** (burthen), per hull. Freight is traded by the
+  ton, so valuable goods such as indigo and pimento are what make a small,
+  fast ship profitable.
+- **Goods are data** (`assets/data/goods.ron`): name, base price, and
+  carriage. Prices are in pieces of eight, the common coin of the West
+  Indies.
+- **People are not cargo.** Soldiers, and later colonists and diplomats,
+  take berths, not hold space, and eat provisions on the way.
+- **Owned and consigned.** The hold keeps the captain's own goods apart
+  from goods carried under contract. A contract is paper; the cargo is
+  physically aboard. Later, a captured ship's consignments go with her.
 
-### 5.3 Port Economy and Jobs (proposed)
+### 5.3 Port Economy and Jobs (built)
 
 One model drives the economy, the jobs, and port control. Jobs are not a
 separate system: they are the economy's needs, shown to the player.
@@ -212,32 +288,260 @@ separate system: they are the economy's needs, shown to the player.
     Moluccas, silver from Veracruz.
   - **Needs:** what it can't make for itself: provisions, timber, naval
     stores, manufactured goods, and soldiers.
-- **Every port has a state:** supply, repair, garrison, and morale. These
-  decay over time and are restored by deliveries. A port's state sets its
-  market prices and its jobs.
-- **Jobs come from needs.** A port short of timber posts a timber haul,
-  sourced from a port that produces timber. A garrison running low asks for
-  soldiers. A shaky governor asks for a diplomat to be carried in, which
-  raises morale. A job is a pickup, a delivery, a deadline, a payment, and
-  an issuer (a group, §4).
+- **A port's state is its stock.** Each good a port deals in has a stock,
+  a target, and a daily rate: produced goods build up, and needed goods run
+  down. Prices rise as stock falls below target and fall as it piles up.
+  Supply and repair are the stocks of provisions, timber, and naval stores.
+  The garrison is the stock of soldiers. Morale, and the diplomats that
+  restore it, come with politics (Milestone 3).
+- **Markets** sell and buy at the price plus or minus 10%, one unit at a
+  time, so a big purchase drives the price up as it goes.
+- **Jobs come from needs.** When a port's stock of a needed good falls
+  below half its target, it posts a job at the nearest port that produces
+  that good: up to 30 tons or heads, a fee by distance, and a deadline of
+  twice a slow merchantman's passage plus a day. The producer hands over the
+  goods on acceptance. Delivering them restocks the port in need; late
+  delivery pays half, and offers nobody took are withdrawn at the deadline.
+  Freight work is offered at the merchants' exchange and soldiers at the
+  governor's house, or at the tavern where a port has neither. Jobs will
+  gain an issuer (a group, §4) with factions.
 - **NPC ships fill the same needs.** Faction convoys and traders carry the
   same deliveries the player can. Whoever arrives first fills the need.
+- **No trade with the enemy.** A port never posts a job at a port of a
+  nation it's at war with.
 - **This is the reason for piracy and war.** A captured supply ship means a
-  port goes without. A port that goes without long enough becomes weak:
-  understrength, unrepaired, and demoralized. A weak port can be attacked
-  and taken. Protecting a port means escorting its convoys and hunting its
-  raiders. This is the "sovereignty" layer of an Earth-bound EVE.
+  port goes without. A port that goes without long enough turns against
+  its masters and can be lost to them (§5.10). Protecting a port means
+  escorting its convoys and hunting its raiders. This is the
+  "sovereignty" layer of an Earth-bound EVE.
 
-#### Port Royal, c. 1715
+#### The first ports, c. 1716
 
-| | Goods | Notes |
-|---|---|---|
-| **Produces** | sugar, rum, molasses, pimento (allspice), logwood, hides, ginger, indigo | Sugar dominated Jamaica by 1715. Jamaica was almost the only source of pimento. Logwood (a dyewood) was cut on the Central American coast and re-exported through Jamaica. |
-| **Needs** | provisions (salt fish, flour, salt beef), timber, naval stores (tar, pitch, cordage, canvas), manufactured goods, munitions, soldiers | Provisions came from New England and Ireland because sugar land wasn't wasted on food. Naval stores were for the Royal Navy station. |
-| **Also** | Spanish silver through contraband trade with the Spanish Main; a slave market | Silver is a high-value, light cargo, and a prime pirate target. The slave trade appears as context only (§9). |
+| Port | Produces | Needs | Notes |
+|---|---|---|---|
+| **Port Royal** (England) | soldiers, sailors | provisions, naval stores, munitions, rum, timber | The Royal Navy's Caribbean base. It eats stores and sends out soldiers. |
+| **Kingston** (England) | sugar, rum, molasses, pimento, ginger, indigo, hides, logwood; and, shipped in, provisions, manufactures, naval stores, munitions, timber | soldiers, salt | Jamaica's commercial port. Sugar dominated the island; Jamaica was almost the only source of pimento; logwood was cut in Central America and re-exported through Jamaica. Provisions came from New England and Ireland because sugar land wasn't wasted on food. |
+| **Nassau** (pirates) | salt, sailors | provisions, rum, munitions, naval stores | The Republic of Pirates, 1716 to 1718. No governor and no exchange: business is done in the taverns. |
+| **Santiago de Cuba** (Spain) | hides, provisions (salt beef), timber, soldiers, sailors | manufactures, munitions, naval stores, salt | Spain's nearest port to Jamaica. Its own fleets come seldom, so it buys Jamaican manufactures, smuggled or not, and its guarda costas hunt the smugglers. |
 
-Port Royal is the Royal Navy's Caribbean base in this era, so military work
-is common there: munitions, naval stores, and dispatches.
+Spanish silver, smuggled in from the Spanish Main, is left out for now:
+silver is money, so it needs its own treatment as plunder rather than as
+freight. The slave trade appears as context only (§9).
+
+### 5.4 Merchant Captains (built)
+
+Seven NPC merchant sloops, with four guns each, work the same contracts
+the player does, through the same orders: accept a job, buy provisions,
+cast off, sail to dock. Five sail under English colours from Jamaica, and
+two (Santa Rosa and San José) under Spanish colours from Santiago. Lost
+ones are replaced at a port of their nation.
+
+- **In port.** A merchant lies in port for 6 hours, then chooses: a
+  contract already aboard comes first, then the best-paying job she can
+  take here. With no work here, she sails to the port with the most work
+  waiting. With none anywhere, she looks again in an hour.
+- **Loading.** Half an hour after choosing, she casts off. The opening
+  fleet sails at 10-minute intervals, so there are ships at sea in the
+  first hour of a new game.
+- **On the map.** Ships at sea carry their names. Right-clicking one lying
+  in port explains she must be caught at sea.
+- **Competition.** Merchants take jobs the player might have wanted, and
+  they restock the ports in need. That keeps prices and jobs moving.
+- **Sightings.** A merchant at sea within sight drops the game to 1×. Ships
+  lying in port aren't sighted.
+
+### 5.5 Battle (built)
+
+Right-click a ship at sea to engage her. Anyone can be attacked; standing
+and reputation come with factions.
+
+- **Battle styles.** The battle style control (4) cycles them, and the
+  action bar shows which is active:
+  - *Auto:* your ship lays herself alongside, and each broadside fires as
+    it bears and is loaded.
+  - *Manual:* you steer (right-click to sail as usual), and the fire
+    controls (1 and 2) fire the port and starboard broadsides.
+  - *Abstract:* the world pauses and the battle is fought by rounds on a
+    screen: close in, broadside, rake her rigging, board, or break off.
+    When one ship closes and the other opens the range, the faster is
+    likelier to win. Dice vary the damage.
+- **Gunnery.** A broadside bears within 35° of abeam, out to 400 m, and
+  reloads in 30 s. Hits fall off with range. Each hit costs timbers,
+  rigging, and men.
+- **Damage.** Rigging damage slows a ship. Crew losses weaken sail
+  handling and boarding. Timbers at zero sink her.
+- **The enemy.** An attacked captain sizes you up: if she's at least as
+  strong, or you're badly battered, she fights broadside-on. Otherwise she
+  runs, downwind if that opens the distance, firing as her guns bear.
+  Beaten (timbers, rigging, or crew), she strikes her colours.
+- **Speed.** A full hold is up to 25% slower, so a raider sailing light
+  catches a laden merchantman. One in ballast may get away.
+- **Boarding.** Within 60 m, the board control (3) boards. A struck ship is carried without a
+  fight. Otherwise crews fight it out, and defenders count for 1.25 men
+  each. Morale and a first mate make each man count for more or less. The victor takes her purse and as much cargo as fits; her
+  contracts are void.
+- **Prizes.** Two spare hands (beyond the 8 you need) sail her as a
+  prize: a prize crew works her home under easy sail, so two sail her as
+  well as a full crew. She
+  follows you and docks where you dock. At a shipyard you can sell her,
+  or take command of her and leave your old ship as the prize. With no
+  hands to spare, she's plundered and let go.
+- **Shipyards** repair timbers and rigging for a fee.
+- **Losing.** Your ship sinking ends the game until you load a save.
+  Losing her to mutiny or the law doesn't (§5.9).
+- **Replacements.** A merchant sunk or taken is replaced two days later.
+
+### 5.6 Fleet (built)
+
+The Fleet panel (Tab) shows the flagship and her prizes, with where each
+lies, her crew, hold, and damage, and a Look button to find her.
+
+- **Orders.** Each prize can be told to follow you (the default), wait
+  where she is, or sail to a port and lie there.
+- **Transfers.** A prize lying alongside (within 200 m at sea) or in the
+  same port can pass cargo and men to and from the flagship, in lots of 1
+  and 10, within hold room and berths.
+
+### 5.7 Nations and Standing (built)
+
+- **Colours.** Ships and ports fly the colours of England, Spain, or the
+  Brethren (the pirates). Port flags come from the map data, and change
+  when a port goes over (§5.10). The player starts under English colours
+  and can hoist any nation's from the Captain panel, except in action.
+  Her colours decide whom her deeds and deliveries count for: ports
+  favour them, enemy ports turn them away, and hostile navies and raiders
+  hunt them. Her standing is her own, whatever she flies.
+- **Standing** with each nation runs from −100 to 100; you start at +10
+  with England. Attacking a nation's ship costs 15, taking her 20, and
+  sinking her 25. Each of those against anyone but the Brethren raises
+  you with the Brethren a little. Delivering a contract to a nation's port
+  earns 3. Bad standing fades by 1 a day; good standing stays.
+- **Wanted.** At −30 or below you're wanted: that nation's ports turn you
+  away, and its navy hunts you. One prize is a warning; a second makes you
+  wanted.
+- **Relations between nations.** Every pair of nations stands from −100
+  to 100: at war at −50 or below, hostile below −25, allies at 50 and
+  up, and at peace between. In 1716 England and Spain are at an uneasy
+  peace (−20), the Brethren are hostile to England (−30), and at war
+  with Spain (−60). Any ship's deeds under colours move relations
+  between her colours and the nation she touched: attacking −4, taking
+  −5, sinking −6, delivering to another nation's port +1, and lying in a
+  port as it rises against its nation −25. Nations already at war take
+  no further offence. Relations drift back to their 1716 footing by 0.5
+  a day. Changes of terms are news in the HUD.
+- **What war means.** Navies hunt the ships of nations they're at war
+  with, a captain their nation wants, and anyone they see attacking their
+  own or an ally's shipping. Ports turn away the player under an enemy's
+  colours, unless the town deals with that nation all the same (favour
+  50 or more), and no port posts a job at an enemy's.
+- **Patrols.** Two English sloops-of-war (HMS Swift and HMS Ferret) and a
+  Spanish guarda costa (San Miguel), each with 8 guns and 40 men, cruise
+  every port but their enemies' and victual at their own nation's. One
+  that sights her quarry gives chase and engages within 1.8 km. Lost
+  patrols are replaced at a home port after four days.
+- **Pirate raiders.** Three sloops of the Brethren (Ranger, Adventure,
+  Revenge; 8 guns, 30 men) fit out at pirate ports. Each carouses a day
+  in port, then lies in wait halfway along a lane between two ports picked
+  at random. She preys on any ship but a warship whose colours are
+  hostile to hers, the player's included, and goes home after four days,
+  or once plunder fills half her hold, to sell it at the nearest port
+  that will have her. Lost raiders are replaced after three days.
+- **NPC prizes.** NPC captains board whoever strikes to them, plunder her
+  purse and cargo, and burn her. Her contracts are lost with her, so the
+  port that needed them goes without.
+- **Sea room.** Ships steering by battle tactics turn aside from land
+  within 600 m ahead.
+
+### 5.8 Saving (built)
+
+Quicksave (F5) and quickload (F9) go to one RON file in the player's
+folder for application data: `~/Library/Application Support/The Brethren/`
+on macOS, `%APPDATA%\The Brethren\` on Windows, and
+`~/.local/share/the-brethren/` on Linux. The key bindings live there too. The map, goods, and ship
+classes are built into the game, so a save holds only what changes: the
+clock, standing, port stocks, ships with their crews' morale, contracts,
+and officers, referring to each other by name.
+Ships under way are given their voyage again as an ordinary sail order. A
+save that names anything the game doesn't have is refused without changing
+anything. Loading returns to 1× with the camera on the player's ship.
+
+### 5.9 Officers and Loyalty (built)
+
+Officers hold one post each, and bring one plain advantage while they're
+free to do their duty:
+
+| Post | Advantage |
+|---|---|
+| First Mate | Each boarder counts for 1.25 |
+| Sailing Master | 10% more from her sails |
+| Gunner | Reloads in three-quarters of the time |
+| Bosun | Repairs rigging (10% a day) and timbers (5% a day, up to 75%) at sea |
+| Surgeon | Saves 30% of the wounded |
+| Quartermaster | Resting morale 10 higher |
+
+- **Getting them.** Every tavern has two officers looking for a post, for
+  a bounty of 100 to 250 pieces of eight; they move on after a few days.
+  A ship taken or plundered gives up her mate as a prisoner, who can be
+  signed on for nothing. One officer per post.
+- **Hidden loyalty.** Each officer is loyal, ambitious, or a turncoat, and
+  the captain never sees which. Hired in an English port: 60%, 25%, 15%.
+  In Nassau: 40%, 45%, 15%. Prisoners: 35%, 30%, 35%.
+- **Signs.** The ambitious are heard grumbling with the hands once the men
+  are less than content. Turncoats are seen ashore with the harbourmaster's
+  clerk in lawful ports, and write letters they show no one at sea. Loyal
+  officers now and then look just as suspicious.
+- **Dealing with doubts.** An officer can be put in irons (no duty, and no
+  mischief), released, put ashore in port, or marooned at sea.
+- **Mutiny.** Below morale 30 at sea, an ambitious officer leads a rising,
+  about an even chance a day; below 10 the hands rise without one. The
+  share of the men who follow grows as morale falls (half at 25, all at
+  0). Against them stand the rest of the hands, the captain, and each
+  loyal officer, worth two. Put down, half the mutineers are lost, the
+  ringleader goes in irons, and morale settles at 40.
+- **Betrayal.** Docking at a port of a nation you've crossed (standing
+  below 0, but not wanted), an unconfined turncoat has an even chance of
+  selling you out. Soldiers are waiting on the quay.
+- **Losing your ship.** Mutineers sail off with her and her purse, bar the
+  fifth in your coat; you're set adrift in a longboat with the men who
+  stood by you. Arrested, the ship and the prizes lying there are seized
+  and you pay half your purse in fines, and two hands wait for you with a
+  boat. Either way your prizes elsewhere and your loyal officers follow
+  you, your contracts are lost, and word gets around: −10 standing with
+  every nation. The longboat (no guns, 4 tons, 24 berths) can still carry
+  small contracts, hire men, and board a weak merchantman, and at a
+  shipyard you can take command of any prize.
+
+### 5.10 Ports and Allegiance (built)
+
+Every port regards each nation with a favour from 0 to 100.
+
+- **Settling.** Favour settles toward 55 for the nation that holds the
+  port and 25 for the others, 5% of the way a day.
+- **Neglect.** While a port is short of the things it needs (below half
+  its target), its owner loses up to 2.5 favour a day, in proportion to
+  the share of its needs that are short. A port short of everything sinks
+  to about 5; one short of a few things grumbles but holds.
+- **Supply.** Whoever brings a port what it needs, by contract or at
+  market, wins favour for the colours she flies: 25 for filling the whole
+  gap below target of one good, in proportion. The other nations lose
+  half that much. Only the gap counts, so flooding a full market wins
+  nothing. This is how pirates selling plunder win over a town, and how
+  a nation that lets a port go hungry loses it.
+- **Restless.** Below 25 for its owner, a port is restless: news in the
+  HUD, and its garrison deserts at two men a day.
+- **Going over.** A restless port rises for the nation it favours most,
+  if more than its owner, when a ship under that nation's colours lies in
+  its harbour and none of its owner's warships stand within 1.5 km. The
+  daily chance is 40% with no garrison, less as its soldiers near their
+  target, and none at full strength. The port takes its new flag with 60
+  favour for its new nation and 10 for its old one. The ship that was
+  there is credited: −25 relations between the nations, and if she's the
+  player, −15 standing with the old nation (+5 with the Brethren).
+- **Dealing with the enemy.** A town with 50 favour for a nation lets
+  its ships in even at war with its owner.
+- **Seen in port.** The town overview gives the port's mood and its
+  favour for every nation; the Nations panel shows every port's, and the
+  terms between every pair of nations.
 
 ---
 
@@ -259,50 +563,60 @@ is common there: munitions, naval stores, and dispatches.
 
 1. ✅ Project skeleton, docs, and coding standards.
 2. ✅ Ocean, wind, one player ship, top-down camera, click-to-sail, and pause.
-   Points-of-sail physics, so the ship can't sail into the wind.
-3. ✅ Automatic tacking when ordered upwind. The ship beats inside a
-   corridor around each leg, sized by how close that leg passes to land.
+3. ✅ Wind as a speed modifier. (Tacking and a speed polar were built
+   first, then dropped because they made passages too slow to be fun.)
 4. ✅ Port Royal and its approaches (Palisadoes, Port Royal Cays, Kingston
    Harbour) built from real coordinates, with land you can run aground on,
-   route planning around land, and docking with a placeholder port screen.
-   Next: a second port, and the real port screen (see §2.1).
-5. One AI ship, plus broadside combat against it.
+   route planning around land, and docking.
+5. ✅ Battle against the merchant fleet: three battle styles, boarding,
+   prizes, and repairs (§5.5).
 
 ### Milestone 2 — "A living harbor"
-1. The port screen with its locations (§2.1).
-2. Goods data, a cargo hold, and a market. Port profiles with what each
+1. ✅ The port screen with its locations (§2.1).
+2. ✅ Goods data, a cargo hold, and a market. Port profiles with what each
    port produces and needs (§5.3).
-3. Crew requirement, berths, and provisions (§5.1). Recruiting at the
+3. ✅ Crew requirement, berths, and provisions (§5.1). Recruiting at the
    tavern.
-4. Port state and jobs generated from port needs.
-5. A second port, so there is somewhere to haul to.
+4. ✅ Port stock and jobs generated from port needs.
+5. ✅ More ports: Kingston across the harbour, and Nassau, on a West Indies
+   map with Cuba, Hispaniola, and the Bahamas. A world calendar starting 1
+   June 1716.
+6. ✅ Time compression, zooming out to the chart, and alerts (§2.2).
 
 ### Milestone 3 — "Colors"
-Factions and groups, standing, and NPC traders and patrols that react to the
-player's allegiance.
+1. ✅ NPC merchant captains carrying the ports' contracts (§5.4).
+2. ✅ Quicksave and quickload (§5.8).
+3. ✅ Nations, standing, wanted status, and navy patrols (§5.7). The fleet
+   screen, prize orders, and transfers (§5.6).
+4. ✅ Spanish ports and ships, pirate raiders, relations between nations,
+   ports' allegiance and changing hands, and the influence overlay (§5.7,
+   §5.10).
+5. Groups within nations, and pardons.
 
 ### Milestone 4 — "Loyalty"
-Crew morale and loyalty, mutiny, defection, and group leadership and coups.
+1. ✅ The HUD at the screen's edges, the action bar and menu, panels, and
+   rebindable keys (§2).
+2. ✅ Crew morale (§5.1).
+3. ✅ Officers, hidden loyalty, mutiny, and betrayal (§5.9).
+4. Defection, and group leadership and coups.
 
 ### Later
 Fleets, more regions (Africa, Indian Ocean, East Indies), weather and
-storms, ship upgrades, save/load, and time acceleration.
+storms, ship upgrades, and multiple save slots.
 
 ---
 
 ## 8. Open Questions
 
-- How much should distances between ports be compressed? This depends on how
-  long a passage feels at 1× time.
+- Now that time compression exists, should the map go back to real
+  distances (`distance_scale` 1.0)? Passages would double in length, about
+  two minutes at top speed for Port Royal to Nassau.
 - Fleet command: should it use direct control of escorts, or
   formation-level orders?
 - Can the player lose their only ship? What does game over, or "start over
   as a common sailor", look like?
-- Does time pass in port? For example, recruiting might take hours of game
-  time, or the port screen could pause the world.
-- Which second port? Candidates are Nassau (pirate haven), Havana or
-  Cartagena (Spanish), and Bridgetown (English sugar island), or a closer
-  town such as Spanish Town for a short first haul.
+- How long should port actions take? Time passes in port (decided), but
+  for now trading, hiring, and signing contracts are instant.
 
 ---
 
@@ -313,7 +627,21 @@ Every deliberate deviation from history or physics goes here, with a reason.
 | Deviation | Reason |
 |---|---|
 | Regional geography drawn at 0.5× real distance (`distance_scale` in each map file). Ships stay true scale | A crossing of the Port Royal approaches takes minutes rather than an hour. Open-ocean passages will need more compression, plus time acceleration. |
-| Port Royal map is set c. 1715, after the 1692 earthquake and the 1703 fire | Keeps the town alive in our era while staying true to its decline. |
+| The game opens 1 June 1716, after the 1692 earthquake and 1703 fire at Port Royal, with Nassau a pirate haven | Keeps Port Royal alive in our era and puts the player in the Republic of Pirates. |
 | Coastlines are hand-traced approximations | First pass. To be refined from real coastline data. |
-| Port Royal trades all of Jamaica's goods. By 1715, much of the island's commerce had moved to Kingston | One port carries the region until Kingston is added. |
+| Ports "produce" goods that really arrived by off-map shipping, such as Kingston's provisions and manufactures from New England and London | Until the map reaches those sources, someone has to supply them. |
+| The Bahama Banks are impassable shoals, and the bank edges are approximate. Small sloops really could cross them | Keeps deep-water routes historical and simple. Shallow-draft sailing can come later. |
+| Nassau salt comes from New Providence itself. Bahamian salt was really raked on the Exumas, Inagua, and the Turks | One port stands in for the islands around it. |
+| Dates use the Gregorian calendar. England still used the Julian calendar, 11 days behind | Simpler, and Spain and France were already Gregorian. |
+| A full hold slows a ship by up to 25% | Gives raiders sailing light an edge over laden merchantmen, so chases can be won. |
+| A ship's crew and gunnery are averaged rather than rolled at sea; only battles by rounds use dice | Predictable, testable broadsides. The abstract style adds the luck. |
+| Captured crews vanish ("set adrift in the boats"), all but her mate, who's held as a prisoner | No prisoners to feed or ransom yet; the mate is worth recruiting. |
+| Mutineers vanish with the ship they take | No pirate captains to sail her yet. |
+| NPC captains burn the ships they take | Fleets of NPC prizes would need captains and orders of their own. The cargo and the port's need are what matter. |
+| A town rises with one ship of the nation it favours in harbour, without a landing or a siege | Lets a single captain, or a raider, decide a port's fate; assaults can come later. |
+| Relations between nations drift back to their 1716 footing | Keeps one bad month from locking the map into permanent war. |
+| The Brethren count as a nation with ports, colours, and relations | Simplest way to put pirate havens and their politics on the same footing as the crowns'. |
+| Officers each bring one fixed advantage, with no skill levels | Easy to read and to weigh. |
+| An arrested captain is fined and freed the same day | No jail time to sit through. |
+| Ships sail straight on any heading, never tacking. Wind only scales speed, from 0.75× head to wind to 1.2× dead downwind | Beating to windward was realistic but made passages tedious. |
 | Slave trade represented only as historical context (faction behavior, port descriptions), never as player cargo | Content choice. |

@@ -2,9 +2,7 @@
 //!
 //! The graph's nodes sit off every convex corner of the coastline. Two nodes
 //! are linked when the leg between them keeps [`LAND_CLEARANCE`] from land. A
-//! route is the shortest chain of links from start to goal. Wind is ignored
-//! here; the helm handles beating along each leg, using each leg's clearance
-//! to decide how wide it may tack.
+//! route is the shortest chain of links from start to goal.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -25,12 +23,30 @@ const CORNER_OFFSET: f32 = LAND_CLEARANCE * 2.0;
 /// its legs to stay this fraction of its own distance from land.
 const ENDPOINT_SLACK: f32 = 0.9;
 
-/// One point on a route, with the clearance of the leg that ends there.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Waypoint {
-    pub point: Vec3,
-    /// How close the leg into this waypoint comes to land, in meters.
-    pub leg_clearance: f32,
+/// Length in meters of a route starting at `from`.
+pub fn route_length(from: Vec3, route: &[Vec3]) -> f32 {
+    route
+        .iter()
+        .fold((from, 0.0), |(start, length), &point| {
+            (point, length + start.distance(point))
+        })
+        .1
+}
+
+/// The point `distance` meters along the route from `from`, or its end if
+/// the route is shorter.
+pub fn point_along(from: Vec3, route: &[Vec3], distance: f32) -> Vec3 {
+    let mut start = from;
+    let mut left = distance;
+    for &point in route {
+        let leg = start.distance(point);
+        if leg >= left {
+            return start.lerp(point, if leg > 0.0 { left / leg } else { 0.0 });
+        }
+        left -= leg;
+        start = point;
+    }
+    start
 }
 
 /// Precomputed visibility graph for the current [`Land`].
@@ -67,25 +83,13 @@ impl NavGraph {
     /// If there's no route, which happens when either end is on land or
     /// enclosed by it, this returns the direct leg and the ship runs aground
     /// trying.
-    pub fn plan(&self, land: &Land, from: Vec3, to: Vec3) -> Vec<Waypoint> {
-        let points = if leg_is_clear(land, from, to) {
+    pub fn plan(&self, land: &Land, from: Vec3, to: Vec3) -> Vec<Vec3> {
+        if leg_is_clear(land, from, to) {
             vec![to]
         } else {
             self.shortest_path(land, from, to)
                 .unwrap_or_else(|| vec![to])
-        };
-        let mut leg_start = from;
-        points
-            .into_iter()
-            .map(|point| {
-                let leg_clearance = land.clearance(leg_start, point);
-                leg_start = point;
-                Waypoint {
-                    point,
-                    leg_clearance,
-                }
-            })
-            .collect()
+        }
     }
 
     /// Dijkstra over the graph plus the two endpoints. The graph has only a
@@ -187,8 +191,18 @@ mod tests {
         }
     }
 
-    fn points(route: &[Waypoint]) -> Vec<Vec3> {
-        route.iter().map(|w| w.point).collect()
+    #[test]
+    fn a_point_along_a_route_follows_its_legs() {
+        let route = [Vec3::new(100.0, 0.0, 0.0), Vec3::new(100.0, 0.0, 100.0)];
+        assert_eq!(
+            point_along(Vec3::ZERO, &route, 50.0),
+            Vec3::new(50.0, 0.0, 0.0)
+        );
+        assert_eq!(
+            point_along(Vec3::ZERO, &route, 150.0),
+            Vec3::new(100.0, 0.0, 50.0)
+        );
+        assert_eq!(point_along(Vec3::ZERO, &route, 999.0), route[1], "the end");
     }
 
     #[test]
@@ -196,10 +210,7 @@ mod tests {
         let land = island();
         let graph = NavGraph::build(&land);
         let to = Vec3::new(500.0, 0.0, -300.0);
-        assert_eq!(
-            points(&graph.plan(&land, Vec3::new(300.0, 0.0, 0.0), to)),
-            vec![to]
-        );
+        assert_eq!(graph.plan(&land, Vec3::new(300.0, 0.0, 0.0), to), vec![to]);
     }
 
     #[test]
@@ -211,26 +222,31 @@ mod tests {
         let route = graph.plan(&land, from, to);
 
         assert!(route.len() >= 3, "should round two corners: {route:?}");
-        assert_eq!(route.last().unwrap().point, to);
-        for waypoint in &route {
-            assert!(waypoint.leg_clearance >= LAND_CLEARANCE, "{waypoint:?}");
+        assert_eq!(route.last(), Some(&to));
+        let mut leg_start = from;
+        for &waypoint in &route {
+            assert!(
+                land.clearance(leg_start, waypoint) >= LAND_CLEARANCE,
+                "{waypoint}"
+            );
+            leg_start = waypoint;
         }
     }
 
     #[test]
-    fn leg_clearance_is_reported_per_leg() {
+    fn route_length_adds_up_every_leg() {
         let land = island();
         let graph = NavGraph::build(&land);
         let from = Vec3::new(-300.0, 0.0, 0.0);
-        let route = graph.plan(&land, from, Vec3::new(300.0, 0.0, 0.0));
-        let mut leg_start = from;
-        for waypoint in route {
-            assert_eq!(
-                waypoint.leg_clearance,
-                land.clearance(leg_start, waypoint.point)
-            );
-            leg_start = waypoint.point;
-        }
+        let to = Vec3::new(300.0, 0.0, 0.0);
+        let route = graph.plan(&land, from, to);
+        let length = route_length(from, &route);
+        assert!(length > from.distance(to), "a detour is longer: {length}");
+        assert_eq!(route_length(from, &[]), 0.0);
+        assert_eq!(
+            route_length(from, &graph.plan(&land, from, from + Vec3::Z * -50.0)),
+            50.0
+        );
     }
 
     #[test]
@@ -250,10 +266,7 @@ mod tests {
         let graph = NavGraph::build(&land);
         let near_shore = Vec3::new(105.0, 0.0, 0.0);
         let offshore = Vec3::new(400.0, 0.0, 0.0);
-        assert_eq!(
-            points(&graph.plan(&land, near_shore, offshore)),
-            vec![offshore]
-        );
+        assert_eq!(graph.plan(&land, near_shore, offshore), vec![offshore]);
     }
 
     #[test]
@@ -274,9 +287,6 @@ mod tests {
         let land = island();
         let graph = NavGraph::build(&land);
         let to = Vec3::ZERO;
-        assert_eq!(
-            points(&graph.plan(&land, Vec3::new(-300.0, 0.0, 0.0), to)),
-            vec![to]
-        );
+        assert_eq!(graph.plan(&land, Vec3::new(-300.0, 0.0, 0.0), to), vec![to]);
     }
 }

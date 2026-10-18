@@ -1,0 +1,135 @@
+# Builds the game for macOS, Windows and Linux.
+#
+# Push a tag like `v0.1.0` to build all three and publish them as a GitHub
+# release. Run it by hand from the Actions tab to build without releasing;
+# the downloads are then attached to the run.
+#
+# The map, goods and font are built into the executable, so each download
+# is just the game.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos
+            os: macos-latest
+          - name: windows-x86_64
+            os: windows-latest
+          - name: linux-x86_64
+            os: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustup picks up the pinned toolchain from rust-toolchain.toml.
+      - name: Install toolchain
+        run: |
+          rustup toolchain install
+          if [ "${{ matrix.name }}" = macos ]; then
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          fi
+
+      - name: Install Linux libraries
+        if: matrix.name == 'linux-x86_64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+
+      - name: Name the build
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          if [ "${{ github.ref_type }}" = tag ]; then
+            echo "LABEL=${{ github.ref_name }}" >> "$GITHUB_ENV"
+          else
+            echo "LABEL=v$version-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          fi
+
+      # One app for both Apple Silicon and Intel Macs.
+      - name: Build and package (macOS)
+        if: matrix.name == 'macos'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          app="dist/The Brethren.app"
+          mkdir -p "$app/Contents/MacOS"
+          lipo -create -output "$app/Contents/MacOS/the_brethren" \
+            target/aarch64-apple-darwin/release/the_brethren \
+            target/x86_64-apple-darwin/release/the_brethren
+          sed "s/VERSION/$VERSION/" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+          codesign --force --deep --sign - "$app"
+          ditto -c -k --keepParent "$app" "the-brethren-$LABEL-macos.zip"
+          echo "ARCHIVE=the-brethren-$LABEL-macos.zip" >> "$GITHUB_ENV"
+
+      - name: Build and package (Windows)
+        if: matrix.name == 'windows-x86_64'
+        run: |
+          cargo build --release --locked
+          mkdir -p dist
+          cp target/release/the_brethren.exe "dist/The Brethren.exe"
+          archive="the-brethren-$LABEL-windows-x86_64.zip"
+          (cd dist && 7z a "../$archive" "The Brethren.exe")
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+
+      - name: Build and package (Linux)
+        if: matrix.name == 'linux-x86_64'
+        run: |
+          cargo build --release --locked
+          mkdir -p dist/the-brethren
+          cp target/release/the_brethren dist/the-brethren/
+          archive="the-brethren-$LABEL-linux-x86_64.tar.gz"
+          tar -czf "$archive" -C dist the-brethren
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+
+  release:
+    name: Publish the release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: downloads
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: downloads/*
+          generate_release_notes: true
+          body: |
+            Download the one for your computer:
+
+            - **macOS** (Apple Silicon and Intel, macOS 11 or later): unzip and move *The Brethren* to Applications. The app isn't signed by Apple yet, so the first time, right-click it and choose **Open**. If macOS says it's damaged, run `xattr -dr com.apple.quarantine "/Applications/The Brethren.app"` in Terminal.
+            - **Windows** (64-bit): unzip and run *The Brethren.exe*. If SmartScreen warns you, choose **More info**, then **Run anyway**.
+            - **Linux** (x86_64): untar and run `the-brethren/the_brethren`. It needs ALSA and udev, which most desktops already have, and Vulkan drivers for your graphics card.

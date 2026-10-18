@@ -8,10 +8,13 @@ pub mod projection;
 
 use bevy::prelude::*;
 
+use crate::allegiance::Favour;
+use crate::economy::market::{Market, MarketEntry};
 use crate::geometry::{polygon_contains, segment_polygon_distance};
+use crate::goods::Goods;
 use crate::math::to_plane;
 use crate::port::Port;
-use data::{MapData, Terrain};
+use data::{MapData, PortData, Terrain, TradeData};
 use projection::GeoProjection;
 
 /// All land on the current map. Ships cannot enter it.
@@ -83,11 +86,20 @@ impl Land {
     }
 }
 
-/// Where and how the player's ship starts on a map.
+/// Where and how the player's ship starts on a map: docked at a port.
 #[derive(Debug, Clone, Copy)]
 pub struct PlayerStart {
+    pub port: Entity,
+    /// The port's anchorage.
     pub position: Vec3,
     pub heading: f32,
+}
+
+/// Map data that refers to something that doesn't exist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MapError {
+    UnknownGood(String),
+    UnknownStartPort(String),
 }
 
 pub struct MapPlugin;
@@ -99,7 +111,11 @@ impl Plugin for MapPlugin {
 }
 
 /// Replaces the world's geography with `map` and spawns its ports.
-pub fn load_map(commands: &mut Commands, map: &MapData) -> PlayerStart {
+pub fn load_map(
+    commands: &mut Commands,
+    map: &MapData,
+    goods: &Goods,
+) -> Result<PlayerStart, MapError> {
     let projection = GeoProjection::new(map.origin, map.distance_scale);
     let masses = map
         .land
@@ -116,21 +132,50 @@ pub fn load_map(commands: &mut Commands, map: &MapData) -> PlayerStart {
         .collect();
     commands.insert_resource(Land { masses });
 
+    let mut start = None;
     for port in &map.ports {
-        commands.spawn((
-            Name::new(port.name.clone()),
-            Port {
-                nation: port.nation.clone(),
-                town: projection.to_world(port.town),
-            },
-            Transform::from_translation(projection.to_world(port.anchorage)),
-        ));
+        let anchorage = projection.to_world(port.anchorage);
+        let entity = commands
+            .spawn((
+                Name::new(port.name.clone()),
+                Port {
+                    flag: port.flag,
+                    town: projection.to_world(port.town),
+                    locations: port.locations.clone(),
+                },
+                Favour::held_by(port.flag),
+                market(port, goods)?,
+                Transform::from_translation(anchorage),
+            ))
+            .id();
+        if port.name == map.player_start.port {
+            start = Some(PlayerStart {
+                port: entity,
+                position: anchorage,
+                heading: map.player_start.heading_degrees.to_radians(),
+            });
+        }
     }
+    start.ok_or_else(|| MapError::UnknownStartPort(map.player_start.port.clone()))
+}
 
-    PlayerStart {
-        position: projection.to_world(map.player_start.position),
-        heading: map.player_start.heading_degrees.to_radians(),
-    }
+/// A port's opening market, from what it produces and needs.
+fn market(port: &PortData, goods: &Goods) -> Result<Market, MapError> {
+    let entry = |trade: &TradeData, sign: f64| {
+        Ok(MarketEntry {
+            good: goods
+                .id(&trade.good)
+                .ok_or_else(|| MapError::UnknownGood(trade.good.clone()))?,
+            stock: trade.stock,
+            target: trade.target,
+            per_day: trade.per_day * sign,
+        })
+    };
+    let produced = port.produces.iter().map(|trade| entry(trade, 1.0));
+    let needed = port.needs.iter().map(|trade| entry(trade, -1.0));
+    Ok(Market {
+        entries: produced.chain(needed).collect::<Result<_, _>>()?,
+    })
 }
 
 #[cfg(test)]
@@ -138,25 +183,84 @@ mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
 
-    fn port_royal() -> (MapData, GeoProjection, Land) {
-        let map = MapData::parse(data::PORT_ROYAL).expect("embedded map must parse");
+    use crate::geometry::segments_cross;
+
+    fn west_indies() -> (MapData, GeoProjection, Land, World) {
+        let map = MapData::parse(data::WEST_INDIES).expect("embedded map must parse");
         let projection = GeoProjection::new(map.origin, map.distance_scale);
         let mut world = World::new();
+        world.insert_resource(Goods::standard());
         world
             .run_system_once_with(
-                |map: In<MapData>, mut commands: Commands| {
-                    load_map(&mut commands, &map);
+                |map: In<MapData>, goods: Res<Goods>, mut commands: Commands| {
+                    load_map(&mut commands, &map, &goods).expect("map refers to real things");
                 },
                 map.clone(),
             )
             .unwrap();
         let land = world.remove_resource::<Land>().unwrap();
-        (map, projection, land)
+        (map, projection, land, world)
     }
 
     #[test]
-    fn port_royal_map_is_valid() {
-        let (map, projection, land) = port_royal();
+    fn coastlines_never_cross_themselves() {
+        let (_, _, land, _) = west_indies();
+        for mass in &land.masses {
+            let n = mass.outline.len();
+            let edge = |i: usize| (mass.outline[i], mass.outline[(i + 1) % n]);
+            for i in 0..n {
+                // Skip each edge's neighbors, which share a vertex with it.
+                for j in (i + 2)..n {
+                    if i == 0 && j == n - 1 {
+                        continue;
+                    }
+                    let ((a, b), (c, d)) = (edge(i), edge(j));
+                    assert!(
+                        !segments_cross(a, b, c, d),
+                        "{} crosses itself at edges {i} and {j}",
+                        mass.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_port_market_is_well_formed() {
+        let (_, _, _, mut world) = west_indies();
+        let mut markets = world.query::<(&Name, &Market)>();
+        assert_eq!(markets.iter(&world).count(), 4);
+        for (name, market) in markets.iter(&world) {
+            for (i, entry) in market.entries.iter().enumerate() {
+                assert!(entry.target > 0.0, "{name}: zero target");
+                assert!(entry.stock >= 0.0, "{name}: negative stock");
+                assert!(
+                    market.entries[..i].iter().all(|e| e.good != entry.good),
+                    "{name} lists a good twice"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_goods_in_a_map_are_an_error() {
+        let mut map = MapData::parse(data::WEST_INDIES).unwrap();
+        map.ports[0].needs[0].good = "unobtainium".into();
+        let mut world = World::new();
+        let result = world
+            .run_system_once_with(
+                |map: In<MapData>, mut commands: Commands| {
+                    load_map(&mut commands, &map, &Goods::standard()).map(|_| ())
+                },
+                map,
+            )
+            .unwrap();
+        assert_eq!(result, Err(MapError::UnknownGood("unobtainium".into())));
+    }
+
+    #[test]
+    fn west_indies_map_is_valid() {
+        let (map, projection, land, _) = west_indies();
         assert_eq!(land.masses.len(), map.land.len());
         for mass in &land.masses {
             assert!(
@@ -165,8 +269,6 @@ mod tests {
                 mass.name
             );
         }
-        let start = projection.to_world(map.player_start.position);
-        assert!(!land.contains(start), "player starts aground");
         for port in &map.ports {
             assert!(
                 land.contains(projection.to_world(port.town)),
@@ -183,7 +285,7 @@ mod tests {
 
     #[test]
     fn every_label_sits_on_its_land_mass() {
-        let (_, _, land) = port_royal();
+        let (_, _, land, _) = west_indies();
         for mass in &land.masses {
             assert!(
                 mass.contains(mass.label),

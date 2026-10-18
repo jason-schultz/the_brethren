@@ -6,7 +6,6 @@
 //! ship completes its route, an [`Arrived`] message tells other domains,
 //! such as ports, what the voyage was for.
 
-pub mod course;
 pub mod route;
 
 use std::collections::VecDeque;
@@ -14,12 +13,10 @@ use std::collections::VecDeque;
 use bevy::prelude::*;
 
 use crate::map::Land;
-use crate::math::{direction_to_heading, to_plane};
-use crate::sailing::{Heading, Helm, Hull, Sails};
+use crate::math::direction_to_heading;
+use crate::sailing::{Helm, Sails};
 use crate::schedule::{FrameSet, SimSet};
-use crate::wind::Wind;
-use course::{course_to, tacking_corridor};
-use route::{NavGraph, Waypoint};
+use route::NavGraph;
 
 /// A ship within this distance (meters) of a waypoint has reached it.
 pub const ARRIVAL_RADIUS: f32 = 40.0;
@@ -53,9 +50,7 @@ pub struct Arrived {
 #[derive(Component, Debug, Clone, PartialEq)]
 pub struct Route {
     /// Remaining waypoints, next first. The last is the destination.
-    pub waypoints: VecDeque<Waypoint>,
-    /// Where the current leg began. Used to keep tacks near the leg.
-    pub leg_start: Vec3,
+    pub waypoints: VecDeque<Vec3>,
     pub on_arrival: Arrival,
 }
 
@@ -98,40 +93,25 @@ fn plan_routes(
         let waypoints = graph.plan(&land, start, order.destination.with_y(0.0));
         commands.entity(order.ship).try_insert(Route {
             waypoints: waypoints.into(),
-            leg_start: start,
             on_arrival: order.on_arrival,
         });
     }
-}
-
-/// Signed distance (meters) of `position` from the line `leg_start → target`,
-/// positive to starboard of the track.
-fn cross_track(leg_start: Vec3, target: Vec3, position: Vec3) -> f32 {
-    let track = to_plane(target - leg_start).normalize_or_zero();
-    let starboard = Vec2::new(-track.y, track.x);
-    to_plane(position - leg_start).dot(starboard)
 }
 
 /// Sets each ship's helm along its route and completes the voyage on arrival.
 fn sail_routes(
     mut commands: Commands,
     mut arrivals: MessageWriter<Arrived>,
-    wind: Res<Wind>,
-    mut ships: Query<(Entity, &mut Route, &Hull, &Heading, &Transform, &mut Helm)>,
+    mut ships: Query<(Entity, &mut Route, &Transform, &mut Helm)>,
 ) {
-    for (ship, mut route, hull, heading, transform, mut helm) in &mut ships {
+    for (ship, mut route, transform, mut helm) in &mut ships {
         let position = transform.translation.with_y(0.0);
         while let Some(next) = route.waypoints.front()
-            && position.distance(next.point) <= ARRIVAL_RADIUS
+            && position.distance(*next) <= ARRIVAL_RADIUS
         {
-            route.leg_start = next.point;
             route.waypoints.pop_front();
         }
-        let Some(&Waypoint {
-            point: target,
-            leg_clearance,
-        }) = route.waypoints.front()
-        else {
+        let Some(&target) = route.waypoints.front() else {
             helm.sails = Sails::Furled;
             commands.entity(ship).remove::<Route>();
             arrivals.write(Arrived {
@@ -140,17 +120,7 @@ fn sail_routes(
             });
             continue;
         };
-        let bearing = direction_to_heading(target - position);
-        let off_track = cross_track(route.leg_start, target, position);
-        let corridor = tacking_corridor(leg_clearance);
-        helm.course = course_to(
-            bearing,
-            wind.from,
-            hull.no_go_angle,
-            heading.0,
-            off_track,
-            corridor,
-        );
+        helm.course = direction_to_heading(target - position);
         helm.sails = Sails::Set;
     }
 }
@@ -161,8 +131,9 @@ mod tests {
     use crate::map::LandMass;
     use crate::map::data::Terrain;
     use crate::math::heading_to_direction;
-    use crate::sailing::Speed;
+    use crate::sailing::{Hull, Speed};
     use crate::test_support::{run_checked, run_seconds, sim_app};
+    use crate::wind::Wind;
 
     /// Spawns a sloop at the origin and orders it to sail `distance` meters toward `bearing`.
     fn order_sloop(app: &mut App, bearing: f32, distance: f32) -> (Entity, Vec3) {
@@ -194,21 +165,13 @@ mod tests {
     }
 
     #[test]
-    fn cross_track_is_positive_to_starboard() {
-        let north = Vec3::new(0.0, 0.0, -100.0);
-        assert!((cross_track(Vec3::ZERO, north, Vec3::new(10.0, 0.0, -50.0)) - 10.0).abs() < 1e-4);
-        assert!((cross_track(Vec3::ZERO, north, Vec3::new(-7.0, 0.0, -50.0)) + 7.0).abs() < 1e-4);
-    }
-
-    #[test]
     fn order_is_planned_into_a_route_even_while_paused() {
         let mut app = sim_app();
         app.world_mut().resource_mut::<Time<Virtual>>().pause();
         let (ship, destination) = order_sloop(&mut app, 0.0, 500.0);
         app.update();
         let route = app.world().get::<Route>(ship).expect("route recorded");
-        let points: Vec<Vec3> = route.waypoints.iter().map(|w| w.point).collect();
-        assert_eq!(points, vec![destination]);
+        assert_eq!(route.waypoints, [destination]);
     }
 
     #[test]
@@ -221,30 +184,12 @@ mod tests {
     }
 
     #[test]
-    fn ship_tacks_to_reach_a_destination_dead_upwind() {
+    fn ship_reaches_a_destination_dead_upwind() {
         let mut app = sim_app();
         let wind_from = app.world().resource::<Wind>().from;
-        let (ship, destination) = order_sloop(&mut app, wind_from, 600.0);
-        run_seconds(&mut app, 1800.0);
+        let (ship, destination) = order_sloop(&mut app, wind_from, 800.0);
+        run_seconds(&mut app, 600.0);
         assert_arrived(&app, ship, destination);
-    }
-
-    #[test]
-    fn beating_upwind_stays_near_the_tacking_corridor() {
-        let mut app = sim_app();
-        let wind_from = app.world().resource::<Wind>().from;
-        let (ship, destination) = order_sloop(&mut app, wind_from, 1000.0);
-        let mut worst: f32 = 0.0;
-        run_checked(&mut app, 2400.0, |world| {
-            let off = cross_track(Vec3::ZERO, destination, position(world, ship));
-            worst = worst.max(off.abs());
-        });
-        assert_arrived(&app, ship, destination);
-        // The ship overshoots the corridor a little while it turns through the wind.
-        assert!(
-            worst < course::MAX_TACKING_CORRIDOR * 1.5,
-            "strayed {worst} m off track"
-        );
     }
 
     #[test]
@@ -302,7 +247,7 @@ mod tests {
     fn ship_heaves_to_and_stops_after_arriving() {
         let mut app = sim_app();
         let wind_from = app.world().resource::<Wind>().from;
-        let (ship, _) = order_sloop(&mut app, wind_from + Hull::SLOOP.best_angle, 300.0);
+        let (ship, _) = order_sloop(&mut app, wind_from + std::f32::consts::FRAC_PI_2, 300.0);
         run_seconds(&mut app, 400.0);
         assert_eq!(app.world().get::<Speed>(ship).unwrap().0, 0.0);
     }

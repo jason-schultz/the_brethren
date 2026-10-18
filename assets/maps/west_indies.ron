@@ -1,35 +1,54 @@
-// Port Royal and the approaches to Kingston Harbour, Jamaica, c. 1715.
+// The western West Indies, c. 1716: Jamaica, Cuba, Hispaniola, and the
+// Bahamas.
 //
 // Coordinates are (latitude, longitude) in degrees, eyeballed from modern
 // geography as a first pass. Refine against real coastline data later.
+// Kingston Harbour is traced in detail; everything else is coarse.
+//
 // Historical notes:
 //   - Port Royal sits on the western tip of the Palisadoes, a long sand spit
 //     enclosing Kingston Harbour. The 1692 earthquake sank much of the town,
-//     and a fire in 1703 burned most of the rest. By 1715 it is a smaller
+//     and a fire in 1703 burned most of the rest. By 1716 it is a smaller
 //     town and the Royal Navy's base in the Caribbean.
-//   - Kingston, founded in 1692 on the harbour's north shore, is growing into
-//     the island's commercial port.
+//   - Kingston, founded in 1692 on the harbour's north shore, has become
+//     the island's commercial port: sugar, rum, and pimento out; provisions
+//     and manufactures in.
 //   - The Port Royal Cays lie off the point. Rackham's Cay is named for
 //     "Calico Jack" Rackham, whose body was gibbeted there in 1720.
+//   - Nassau, on New Providence, was sacked by the French and Spanish in
+//     1703 and 1706 and left without a government. From 1716 it is the
+//     "Republic of Pirates" of Hornigold, Jennings, and Blackbeard, until
+//     Woodes Rogers arrives as governor in 1718.
+//   - Santiago de Cuba, at the head of its deep pocket bay on Cuba's south
+//     coast, is Spain's nearest port to Jamaica. It ships hides, salt beef,
+//     and Cuban hardwood, and its guarda costas prey on English smugglers,
+//     though the town buys Jamaican manufactures all the same.
+//   - Tortuga, off Hispaniola, was the buccaneers' old haven in the 1600s.
+//   - The Bahama Banks are drawn as impassable shoals. They are only a few
+//     meters deep, and deep-water routes went around them.
+//
+// Port trade lists: `target` is the stock a market wants on hand and
+// `per_day` is how fast it makes or uses that good. "Produces" covers both
+// the port's own hinterland and what off-map shipping brings it. Sailors are
+// men looking for a berth; soldiers are the garrison.
 (
-    name: "Port Royal",
+    name: "The West Indies",
     origin: (17.9372, -76.8435),
-    // Geography is drawn at half real size so passages take minutes, not hours.
-    // Ships stay true scale. See the creative-license log in docs/DESIGN.md.
+    // Geography is drawn at half real size. Ships stay true scale. See the
+    // creative-license log in docs/DESIGN.md.
     distance_scale: 0.5,
-    // South of the cays, running west before the trade wind toward the point.
     player_start: (
-        position: (17.9050, -76.7900),
-        heading_degrees: 270.0,
+        port: "Port Royal",
+        heading_degrees: 90.0,
     ),
     land: [
         (
             name: "Jamaica",
             terrain: Forest,
-            label: Some((17.9900, -76.8200)),
+            label: Some((18.1500, -77.3000)),
             outline: [
-                // South coast, west to east: Hellshire, Port Henderson,
-                // the harbour's north shore past Kingston, then east of the harbour.
+                // Kingston Harbour in detail, west to east: Hellshire,
+                // Port Henderson, the harbour's north shore past Kingston.
                 (17.8800, -77.0000), (17.8680, -76.9600), (17.8720, -76.9350),
                 (17.8950, -76.9120), (17.9200, -76.8950), (17.9420, -76.8820),
                 (17.9550, -76.8720), (17.9580, -76.8580), (17.9560, -76.8460),
@@ -37,8 +56,21 @@
                 (17.9680, -76.7900), (17.9660, -76.7700), (17.9620, -76.7550),
                 (17.9600, -76.7400), (17.9620, -76.7250), (17.9660, -76.7120),
                 (17.9620, -76.7000), (17.9500, -76.6850), (17.9400, -76.6650),
-                // Inland boundary, off the edge of the playable map.
-                (18.0200, -76.6650), (18.0200, -77.0000),
+                // East along the south coast to Morant Point.
+                (17.9200, -76.6200), (17.8850, -76.5300), (17.8700, -76.4500),
+                (17.8800, -76.3800), (17.8900, -76.2600), (17.9300, -76.1800),
+                // The north coast, east to west: Port Antonio, Port Maria,
+                // St Ann's Bay, Montego Bay, Lucea.
+                (18.0400, -76.2500), (18.1700, -76.4200), (18.2200, -76.6000),
+                (18.2700, -76.7600), (18.3700, -76.8900), (18.4100, -77.1000),
+                (18.4500, -77.2300), (18.4700, -77.4200), (18.4900, -77.6600),
+                (18.4700, -77.9200), (18.4600, -78.1700), (18.3900, -78.3400),
+                // Negril, then the south coast back east: Savanna-la-Mar,
+                // Black River, Portland Point, Old Harbour Bay.
+                (18.2500, -78.3700), (18.2100, -78.1300), (18.0300, -77.8600),
+                (17.8800, -77.7600), (17.8500, -77.5700), (17.8000, -77.4000),
+                (17.7300, -77.1700), (17.8300, -77.1500), (17.8900, -77.0800),
+                (17.8700, -77.0300),
             ],
         ),
         (
@@ -95,14 +127,241 @@
             label: None,
             outline: [(17.90470, -76.82257), (17.90465, -76.82309), (17.90436, -76.82366), (17.90375, -76.82363), (17.90329, -76.82343), (17.90321, -76.82289), (17.90373, -76.82251), (17.90431, -76.82221)],
         ),
+        (
+            name: "Cuba",
+            terrain: Forest,
+            label: Some((22.1500, -79.5000)),
+            outline: [
+                // North coast, east to west: Punta Maisí, Baracoa, Gibara,
+                // Nuevitas, the Hicacos peninsula, Matanzas, Havana.
+                (20.2400, -74.1300), (20.3500, -74.5000), (20.6700, -74.9300),
+                (20.9500, -75.5500), (21.1100, -76.1300), (21.3000, -76.6000),
+                (21.5500, -77.2500), (21.9000, -77.8000), (22.3000, -78.4000),
+                (22.6000, -79.1000), (22.8500, -79.9000), (23.0500, -80.5000),
+                (23.2000, -81.1500), (23.0500, -81.5800), (23.1400, -82.3600),
+                (22.9500, -83.1700), (22.7500, -83.7000), (22.3500, -84.4000),
+                // Cabo San Antonio, then the south coast back east: the Gulf
+                // of Batabanó, Cienfuegos, Trinidad, the Gulf of
+                // Guacanayabo, Cabo Cruz, Santiago, Guantánamo.
+                (21.8700, -84.9500), (21.7600, -84.5200), (22.2000, -84.0000),
+                (22.4000, -83.4000), (22.6500, -82.6000), (22.6800, -82.2000),
+                (22.3500, -81.6000), (22.1000, -81.1000), (22.0500, -80.4500),
+                (21.7500, -79.9800), (21.6000, -79.3000), (21.3500, -78.6500),
+                (20.9500, -78.0500), (20.6500, -77.5500), (20.3400, -77.1200),
+                (19.8400, -77.7300), (19.9200, -77.2000), (19.9800, -76.5000),
+                (19.9800, -75.8500), (19.9000, -75.1500), (20.0500, -74.5000),
+            ],
+        ),
+        (
+            name: "Hispaniola",
+            terrain: Forest,
+            label: Some((19.0000, -71.0000)),
+            outline: [
+                // North coast, west to east: Môle Saint-Nicolas,
+                // Port-de-Paix, Cap-Français, Monte Cristi, Puerto Plata.
+                (19.8000, -73.3800), (19.9400, -72.8300), (19.7600, -72.2000),
+                (19.8500, -71.6500), (19.8000, -70.6900), (19.6600, -69.9200),
+                (19.3000, -69.2000), (19.0000, -68.8000), (18.6100, -68.3200),
+                // South coast, east to west: Santo Domingo, Cabo Beata,
+                // Jacmel, Les Cayes, Cap Tiburon.
+                (18.4000, -68.6000), (18.4200, -69.3000), (18.4700, -69.9000),
+                (18.2500, -70.5000), (18.2000, -71.0800), (17.6000, -71.4200),
+                (18.0300, -71.7400), (18.2300, -72.5300), (18.1500, -73.2000),
+                (18.1900, -73.7500), (18.3000, -74.4500), (18.6000, -74.4300),
+                // Round the Gulf of Gonâve: Jérémie, Port-au-Prince, Gonaïves.
+                (18.6500, -74.1200), (18.5000, -73.4000), (18.5400, -72.3400),
+                (19.0000, -72.7500), (19.4500, -72.6900), (19.6500, -73.1000),
+            ],
+        ),
+        (
+            name: "Gonâve",
+            terrain: Forest,
+            label: None,
+            outline: [(18.9300, -73.3000), (18.9500, -72.9000), (18.8000, -72.8000), (18.7500, -73.1000)],
+        ),
+        (
+            name: "Tortuga",
+            terrain: Forest,
+            label: None,
+            outline: [(20.0700, -72.9500), (20.0800, -72.6500), (20.0200, -72.6200), (20.0000, -72.9000)],
+        ),
+        (
+            name: "Great Inagua",
+            terrain: Sand,
+            label: None,
+            outline: [(21.1000, -73.6800), (21.2000, -73.4000), (21.1300, -73.0500), (20.9300, -73.0200), (20.9200, -73.4000), (20.9800, -73.6800)],
+        ),
+        (
+            name: "Mayaguana",
+            terrain: Sand,
+            label: None,
+            outline: [(22.4500, -73.1500), (22.4000, -72.7500), (22.3000, -72.8500), (22.3300, -73.1000)],
+        ),
+        (
+            name: "Crooked Island and Acklins",
+            terrain: Sand,
+            label: None,
+            outline: [(22.8200, -74.3500), (22.7500, -73.9500), (22.4000, -73.8000), (22.1500, -73.9500), (22.2000, -74.2000), (22.5500, -74.4000)],
+        ),
+        (
+            name: "Long Island",
+            terrain: Sand,
+            label: Some((23.2500, -75.1000)),
+            outline: [(23.6500, -75.3300), (23.4500, -75.1200), (23.1000, -74.9200), (22.8500, -74.8300), (22.9500, -74.9800), (23.3000, -75.2000), (23.5500, -75.3600)],
+        ),
+        (
+            name: "Cat Island",
+            terrain: Sand,
+            label: Some((24.4200, -75.5500)),
+            outline: [(24.7000, -75.7500), (24.4500, -75.4500), (24.1500, -75.2800), (24.2000, -75.4500), (24.4500, -75.6500), (24.6200, -75.8000)],
+        ),
+        (
+            name: "Eleuthera",
+            terrain: Sand,
+            label: Some((25.1000, -76.3000)),
+            outline: [(25.5500, -76.7200), (25.4500, -76.4000), (25.2000, -76.1500), (24.8500, -76.1200), (24.6200, -76.1500), (24.7500, -76.2500), (25.0500, -76.4000), (25.3000, -76.6500), (25.4800, -76.8000)],
+        ),
+        (
+            name: "New Providence",
+            terrain: Forest,
+            label: Some((25.0300, -77.4300)),
+            outline: [(25.0780, -77.5500), (25.0780, -77.2800), (25.0400, -77.2700), (24.9900, -77.3300), (24.9900, -77.5000), (25.0200, -77.5600)],
+        ),
+        (
+            name: "Hog Island",
+            terrain: Sand,
+            label: None,
+            outline: [(25.0875, -77.3430), (25.0890, -77.2900), (25.0855, -77.2900), (25.0850, -77.3400)],
+        ),
+        (
+            name: "Andros",
+            terrain: Forest,
+            label: None,
+            outline: [(25.1500, -78.1000), (24.9000, -77.8000), (24.5000, -77.7000), (24.1000, -77.6000), (23.9500, -77.7500), (24.2000, -78.1000), (24.6500, -78.3000), (25.0000, -78.2500)],
+        ),
+        (
+            name: "Great Bahama Bank",
+            terrain: Shoal,
+            label: Some((23.2000, -77.0000)),
+            outline: [
+                // North edge from Bimini to the Berry Islands.
+                (25.7500, -79.3000), (25.6500, -78.6000), (25.8000, -77.8500),
+                (25.4500, -77.7000),
+                // Round the Tongue of the Ocean, a deep inlet in the bank.
+                (24.8000, -77.6200), (24.2000, -77.4500), (23.8500, -77.1000),
+                (24.3000, -77.0500), (24.8500, -77.2000),
+                // Under New Providence, then down the Exuma Cays and the
+                // Ragged Islands.
+                (25.0200, -77.4000), (25.0200, -77.3000), (25.0000, -77.0000),
+                (24.8000, -76.8000), (24.4000, -76.5500), (23.9000, -76.1000),
+                (23.5000, -75.8000), (23.0000, -75.7200), (22.2000, -75.7500),
+                // South edge along the Old Bahama Channel, then the west edge
+                // up the Santaren Channel.
+                (22.4000, -76.8000), (22.4500, -77.6500), (22.9500, -78.3000),
+                (23.3500, -78.8500), (23.8000, -79.2500), (24.5000, -79.4500),
+                (25.2000, -79.3500),
+            ],
+        ),
+        (
+            name: "Little Bahama Bank",
+            terrain: Shoal,
+            label: Some((26.7000, -78.0000)),
+            outline: [(25.8500, -77.2000), (26.3000, -76.9500), (26.9000, -77.1500), (27.3000, -78.0000), (27.2000, -79.0000), (26.7000, -79.0000), (26.5000, -78.6000), (26.5000, -77.9000), (26.1000, -77.5000)],
+        ),
     ],
     ports: [
         (
             name: "Port Royal",
-            nation: "England",
+            flag: England,
             town: (17.9378, -76.8405),
             // The anchorage inside the harbour, off the town's north shore.
             anchorage: (17.9435, -76.8405),
+            locations: [Tavern, Market, Shipyard, GovernorsHouse, MerchantsExchange],
+            // The navy's base: it eats stores and sends out soldiers.
+            produces: [
+                (good: "soldiers", target: 120.0, per_day: 0.5, stock: 150.0),
+                (good: "sailors", target: 30.0, per_day: 2.0, stock: 25.0),
+            ],
+            needs: [
+                (good: "provisions", target: 80.0, per_day: 4.0, stock: 50.0),
+                (good: "naval_stores", target: 40.0, per_day: 1.5, stock: 12.0),
+                (good: "munitions", target: 30.0, per_day: 1.0, stock: 20.0),
+                (good: "rum", target: 30.0, per_day: 1.5, stock: 10.0),
+                (good: "timber", target: 60.0, per_day: 2.0, stock: 40.0),
+            ],
+        ),
+        (
+            name: "Kingston",
+            flag: England,
+            town: (17.9720, -76.7950),
+            anchorage: (17.9600, -76.7950),
+            locations: [Tavern, Market, Shipyard, MerchantsExchange],
+            // Jamaica's produce goes out through Kingston, and the
+            // island's imports come in.
+            produces: [
+                (good: "sugar", target: 200.0, per_day: 8.0, stock: 200.0),
+                (good: "rum", target: 120.0, per_day: 5.0, stock: 120.0),
+                (good: "molasses", target: 80.0, per_day: 3.0, stock: 80.0),
+                (good: "pimento", target: 40.0, per_day: 1.0, stock: 40.0),
+                (good: "ginger", target: 30.0, per_day: 1.0, stock: 30.0),
+                (good: "indigo", target: 10.0, per_day: 0.3, stock: 10.0),
+                (good: "hides", target: 40.0, per_day: 1.0, stock: 40.0),
+                (good: "logwood", target: 100.0, per_day: 3.0, stock: 100.0),
+                (good: "provisions", target: 150.0, per_day: 5.0, stock: 150.0),
+                (good: "manufactures", target: 60.0, per_day: 2.0, stock: 60.0),
+                (good: "naval_stores", target: 50.0, per_day: 1.5, stock: 50.0),
+                (good: "munitions", target: 20.0, per_day: 0.5, stock: 20.0),
+                (good: "timber", target: 80.0, per_day: 2.0, stock: 80.0),
+                (good: "sailors", target: 15.0, per_day: 1.0, stock: 15.0),
+            ],
+            needs: [
+                (good: "soldiers", target: 30.0, per_day: 0.2, stock: 12.0),
+                (good: "salt", target: 40.0, per_day: 1.5, stock: 15.0),
+            ],
+        ),
+        (
+            name: "Nassau",
+            flag: Pirates,
+            town: (25.0740, -77.3430),
+            // Inside Hog Island, the harbour's natural breakwater.
+            anchorage: (25.0815, -77.3350),
+            // No governor and no exchange: business is done in the taverns.
+            locations: [Tavern, Market, Shipyard],
+            produces: [
+                (good: "salt", target: 60.0, per_day: 3.0, stock: 60.0),
+                (good: "sailors", target: 80.0, per_day: 4.0, stock: 70.0),
+            ],
+            needs: [
+                (good: "provisions", target: 100.0, per_day: 4.0, stock: 25.0),
+                (good: "rum", target: 60.0, per_day: 3.0, stock: 15.0),
+                (good: "munitions", target: 40.0, per_day: 1.0, stock: 8.0),
+                (good: "naval_stores", target: 30.0, per_day: 1.0, stock: 8.0),
+            ],
+        ),
+        (
+            name: "Santiago de Cuba",
+            flag: Spain,
+            town: (20.0050, -75.8300),
+            // Off the mouth of the bay, below El Morro.
+            anchorage: (19.9550, -75.8400),
+            locations: [Tavern, Market, Shipyard, GovernorsHouse, MerchantsExchange],
+            // Cattle country: hides and salt beef, Cuban hardwood, and a
+            // garrison of its own.
+            produces: [
+                (good: "hides", target: 60.0, per_day: 2.0, stock: 60.0),
+                (good: "provisions", target: 80.0, per_day: 3.0, stock: 80.0),
+                (good: "timber", target: 80.0, per_day: 2.5, stock: 80.0),
+                (good: "soldiers", target: 60.0, per_day: 0.3, stock: 50.0),
+                (good: "sailors", target: 20.0, per_day: 1.0, stock: 15.0),
+            ],
+            // Spain's own fleets come seldom: the town wants for nearly
+            // everything made, and salt to cure its beef.
+            needs: [
+                (good: "manufactures", target: 40.0, per_day: 1.5, stock: 25.0),
+                (good: "munitions", target: 20.0, per_day: 0.6, stock: 12.0),
+                (good: "naval_stores", target: 25.0, per_day: 0.8, stock: 15.0),
+                (good: "salt", target: 30.0, per_day: 1.0, stock: 18.0),
+            ],
         ),
     ],
 )

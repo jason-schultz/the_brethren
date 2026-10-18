@@ -2,8 +2,12 @@
 
 use serde::Deserialize;
 
-/// The Port Royal starting map, embedded at compile time.
-pub const PORT_ROYAL: &str = include_str!("../../assets/maps/port_royal.ron");
+use crate::factions::Nation;
+
+use crate::port::Location;
+
+/// The West Indies starting map, embedded at compile time.
+pub const WEST_INDIES: &str = include_str!("../../assets/maps/west_indies.ron");
 
 /// `(latitude, longitude)` in degrees. North and east are positive.
 pub type LatLon = (f64, f64);
@@ -20,9 +24,11 @@ pub struct MapData {
     pub ports: Vec<PortData>,
 }
 
+/// The player starts docked at a port.
 #[derive(Deserialize, Debug, Clone)]
 pub struct StartData {
-    pub position: LatLon,
+    /// Name of one of the map's ports.
+    pub port: String,
     pub heading_degrees: f32,
 }
 
@@ -41,16 +47,37 @@ pub enum Terrain {
     Sand,
     /// Wooded or cultivated high ground.
     Forest,
+    /// Banks too shallow to sail over. Ships ground on them as on land.
+    Shoal,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct PortData {
     pub name: String,
-    pub nation: String,
+    /// The flag the port flies.
+    pub flag: Nation,
     /// The town itself, on land.
     pub town: LatLon,
     /// Where ships lie to dock, in water.
     pub anchorage: LatLon,
+    pub locations: Vec<Location>,
+    /// Goods the port supplies, whether grown, made, or shipped in from off the map.
+    pub produces: Vec<TradeData>,
+    /// Goods the port uses up and must have delivered.
+    pub needs: Vec<TradeData>,
+}
+
+/// One good in a port's market.
+#[derive(Deserialize, Debug, Clone)]
+pub struct TradeData {
+    /// A key from the goods data.
+    pub good: String,
+    /// Stock the market wants on hand.
+    pub target: f64,
+    /// Units made (for `produces`) or used (for `needs`) per day.
+    pub per_day: f64,
+    /// Stock at the start of the game.
+    pub stock: f64,
 }
 
 impl MapData {
