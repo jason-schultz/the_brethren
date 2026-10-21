@@ -1,7 +1,8 @@
-//! The shipyard: repairs, selling prizes, and changing ships.
+//! The shipyard: repairs, selling prizes, changing ships, and buying new
+//! ones.
 //!
-//! All three happen at a port with a shipyard, and take effect at once, so
-//! they work while paused.
+//! All of them happen at a port with a shipyard, and take effect at once,
+//! so they work while paused.
 
 use bevy::prelude::*;
 
@@ -9,7 +10,8 @@ use crate::alert::InSight;
 use crate::cargo::{Hold, Purse};
 use crate::combat::{FireControl, Timbers};
 use crate::crew::{Complement, Crew};
-use crate::factions::Colours;
+use crate::economy::Refusal;
+use crate::factions::{CaptainRecord, Colours};
 use crate::goods::Goods;
 use crate::officers::{Berth, Officer, reassign};
 use crate::player::Player;
@@ -46,6 +48,23 @@ pub struct TakeCommand {
     pub prize: Entity,
 }
 
+/// Order a docked ship exchanged for a new one of `class`.
+#[derive(Message, Debug, Clone, Copy, PartialEq)]
+pub struct BuyShip {
+    pub ship: Entity,
+    pub class: ShipClass,
+}
+
+/// A ship offered in part exchange, as the yard sees her.
+#[derive(Debug, Clone, Copy)]
+pub struct PartExchange<'a> {
+    pub class: &'a ShipClass,
+    pub timbers: f32,
+    pub rigging: f32,
+    pub hold: &'a Hold,
+    pub crew: &'a Crew,
+}
+
 /// What it costs to make a ship of `class` sound again.
 pub fn repair_cost(class: &ShipClass, timbers: f32, rigging: f32) -> u32 {
     let price = class.price as f64;
@@ -54,8 +73,16 @@ pub fn repair_cost(class: &ShipClass, timbers: f32, rigging: f32) -> u32 {
     (price * (hull + rig)).round() as u32
 }
 
-/// What a prize fetches: her hull, less what she needs in repairs, and
-/// whatever cargo is still aboard.
+/// What a ship of `class` fetches without her cargo: her hull, less what
+/// she needs in repairs.
+fn hull_value(class: &ShipClass, timbers: f32, rigging: f32) -> u32 {
+    let hull = class.price as f64 * PRIZE_DISCOUNT;
+    (hull - repair_cost(class, timbers, rigging) as f64)
+        .max(0.0)
+        .round() as u32
+}
+
+/// What a prize fetches: her hull, and whatever cargo is still aboard.
 pub fn prize_value(
     goods: &Goods,
     class: &ShipClass,
@@ -63,15 +90,38 @@ pub fn prize_value(
     rigging: f32,
     hold: &Hold,
 ) -> u32 {
-    let hull = class.price as f64 * PRIZE_DISCOUNT;
     let cargo: f64 = hold
         .owned
         .iter()
         .map(|(good, quantity)| goods.get(good).base_price * quantity * CARGO_DISCOUNT)
         .sum();
-    (hull + cargo - repair_cost(class, timbers, rigging) as f64)
-        .max(0.0)
-        .round() as u32
+    hull_value(class, timbers, rigging) + cargo.round() as u32
+}
+
+/// What a new ship of `class` costs at `port`, with `old` in part
+/// exchange at what she'd fetch as a prize without her cargo: negative
+/// when the yard owes the difference. Or why the yard won't sell her: no
+/// shipyard here, no berths for everyone aboard, no room for the cargo, or
+/// not the money. The port screen and the order both use this.
+pub fn check_purchase(
+    goods: &Goods,
+    port: &Port,
+    class: &ShipClass,
+    old: PartExchange,
+    purse: Purse,
+) -> Result<i64, Refusal> {
+    if !has_shipyard(port) {
+        return Err(Refusal::NotTraded);
+    }
+    let aboard = old.crew.count as f64 + old.hold.passengers(goods);
+    if aboard > class.complement.berths as f64 || old.hold.tons_used(goods) > class.hold_tons {
+        return Err(Refusal::NoRoom);
+    }
+    let cost = class.price as i64 - hull_value(old.class, old.timbers, old.rigging) as i64;
+    if cost > purse.0 as i64 {
+        return Err(Refusal::CantAfford);
+    }
+    Ok(cost)
 }
 
 /// Whether `port` has a shipyard.
@@ -86,9 +136,10 @@ impl Plugin for ShipyardPlugin {
         app.add_message::<RepairOrder>()
             .add_message::<SellPrize>()
             .add_message::<TakeCommand>()
+            .add_message::<BuyShip>()
             .add_systems(
                 Update,
-                (repair, sell_prizes, take_command).in_set(FrameSet::Orders),
+                (repair, sell_prizes, take_command, buy_ships).in_set(FrameSet::Orders),
             );
     }
 }
@@ -178,6 +229,7 @@ fn take_command(
         }
         commands
             .entity(old)
+            .move_components::<CaptainRecord>(order.prize)
             .remove::<(Player, InSight, Colours)>()
             // Her guns are no longer the captain's to fire.
             .insert((
@@ -194,20 +246,62 @@ fn take_command(
     }
 }
 
+/// The yard takes her old ship and fits her company into a new one: her
+/// crew, cargo, officers, prizes, and record stay as they were, and so does
+/// her name.
+fn buy_ships(
+    mut orders: MessageReader<BuyShip>,
+    goods: Res<Goods>,
+    ports: Query<&Port>,
+    mut ships: Query<(
+        &Docked,
+        &ShipClass,
+        (&Timbers, &Rigging),
+        &mut Hold,
+        &Crew,
+        &mut Purse,
+    )>,
+    mut commands: Commands,
+) {
+    for order in orders.read() {
+        let Ok((docked, old, (timbers, rigging), mut hold, crew, mut purse)) =
+            ships.get_mut(order.ship)
+        else {
+            continue;
+        };
+        let Ok(port) = ports.get(docked.port) else {
+            continue;
+        };
+        let old = PartExchange {
+            class: old,
+            timbers: timbers.0,
+            rigging: rigging.0,
+            hold: &hold,
+            crew,
+        };
+        let Ok(cost) = check_purchase(&goods, port, &order.class, old, *purse) else {
+            continue;
+        };
+        purse.0 = (purse.0 as i64 - cost) as u32;
+        hold.capacity_tons = order.class.hold_tons;
+        commands.entity(order.ship).insert(order.class.new_hull());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const SLOOP: ShipClass = ShipClass::SLOOP;
+    use crate::combat::Battery;
+    use crate::sailing::Hull;
 
     #[test]
     fn a_sound_ship_needs_no_repairs_and_a_wreck_costs_most() {
-        assert_eq!(repair_cost(&SLOOP, 1.0, 1.0), 0);
-        let wreck = repair_cost(&SLOOP, 0.0, 0.0);
-        assert!(wreck > repair_cost(&SLOOP, 0.5, 0.5));
-        assert!(wreck < SLOOP.price, "cheaper than a new ship");
+        assert_eq!(repair_cost(&ShipClass::sloop(), 1.0, 1.0), 0);
+        let wreck = repair_cost(&ShipClass::sloop(), 0.0, 0.0);
+        assert!(wreck > repair_cost(&ShipClass::sloop(), 0.5, 0.5));
+        assert!(wreck < ShipClass::sloop().price, "cheaper than a new ship");
         assert!(
-            repair_cost(&SLOOP, 0.5, 1.0) > repair_cost(&SLOOP, 1.0, 0.5),
+            repair_cost(&ShipClass::sloop(), 0.5, 1.0) > repair_cost(&ShipClass::sloop(), 1.0, 0.5),
             "hulls cost more"
         );
     }
@@ -218,9 +312,131 @@ mod tests {
         let empty = Hold::new(40.0);
         let mut laden = Hold::new(40.0);
         laden.owned.add(goods.id("rum").unwrap(), 20.0);
-        let sound = prize_value(&goods, &SLOOP, 1.0, 1.0, &empty);
-        assert!(prize_value(&goods, &SLOOP, 0.3, 0.3, &empty) < sound);
-        assert!(prize_value(&goods, &SLOOP, 1.0, 1.0, &laden) > sound);
-        assert!(sound < SLOOP.price);
+        let sound = prize_value(&goods, &ShipClass::sloop(), 1.0, 1.0, &empty);
+        assert!(prize_value(&goods, &ShipClass::sloop(), 0.3, 0.3, &empty) < sound);
+        assert!(prize_value(&goods, &ShipClass::sloop(), 1.0, 1.0, &laden) > sound);
+        assert!(sound < ShipClass::sloop().price);
+    }
+
+    fn yard() -> Port {
+        Port {
+            flag: crate::factions::Nation::ENGLAND,
+            town: Vec3::ZERO,
+            locations: vec![Location::Shipyard],
+        }
+    }
+
+    fn class(name: &str) -> ShipClass {
+        ShipClass::named(name).unwrap()
+    }
+
+    /// What a `class` costs a sloop with `crew` men, `hold`, and
+    /// `timbers`, and a purse of `purse`.
+    fn price(
+        class: &ShipClass,
+        crew: u32,
+        hold: &Hold,
+        timbers: f32,
+        purse: u32,
+    ) -> Result<i64, Refusal> {
+        let crew = Crew::new(crew);
+        let old = PartExchange {
+            class: &ShipClass::sloop(),
+            timbers,
+            rigging: 1.0,
+            hold,
+            crew: &crew,
+        };
+        check_purchase(&Goods::standard(), &yard(), class, old, Purse(purse))
+    }
+
+    #[test]
+    fn her_old_ship_goes_in_part_exchange() {
+        let hold = ShipClass::sloop().empty_hold();
+        let brig = class("Brig");
+        let cost = price(&brig, 12, &hold, 1.0, 100_000).unwrap();
+        assert!(0 < cost && cost < brig.price as i64, "{cost}");
+        let battered = price(&brig, 12, &hold, 0.3, 100_000).unwrap();
+        assert!(battered > cost, "a battered ship is worth less");
+        assert!(
+            price(&class("Longboat"), 4, &hold, 1.0, 0).unwrap() < 0,
+            "the yard pays the difference for a smaller ship"
+        );
+    }
+
+    #[test]
+    fn the_yard_sells_only_what_she_can_pay_for_and_fill() {
+        let goods = Goods::standard();
+        let empty = ShipClass::sloop().empty_hold();
+        let brig = class("Brig");
+        assert_eq!(price(&brig, 12, &empty, 1.0, 100), Err(Refusal::CantAfford));
+        let schooner = class("Schooner");
+        assert_eq!(
+            price(&schooner, 70, &empty, 1.0, 100_000),
+            Err(Refusal::NoRoom),
+            "too few berths for her crew"
+        );
+        let mut laden = ShipClass::sloop().empty_hold();
+        laden.owned.add(goods.id("rum").unwrap(), 35.0);
+        assert_eq!(
+            price(&schooner, 12, &laden, 1.0, 100_000),
+            Err(Refusal::NoRoom),
+            "too small a hold for her cargo"
+        );
+        assert!(price(&brig, 12, &laden, 1.0, 100_000).is_ok());
+        let crew = Crew::new(12);
+        let old = PartExchange {
+            class: &ShipClass::sloop(),
+            timbers: 1.0,
+            rigging: 1.0,
+            hold: &empty,
+            crew: &crew,
+        };
+        let no_yard = Port {
+            locations: vec![Location::Tavern],
+            ..yard()
+        };
+        assert_eq!(
+            check_purchase(&goods, &no_yard, &brig, old, Purse(100_000)),
+            Err(Refusal::NotTraded)
+        );
+    }
+
+    #[test]
+    fn a_new_ship_comes_sound_and_armed_with_her_company_aboard() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, ShipyardPlugin))
+            .insert_resource(Goods::standard());
+        let port = app.world_mut().spawn(yard()).id();
+        let goods = Goods::standard();
+        let sloop = ShipClass::sloop();
+        let mut hold = sloop.empty_hold();
+        hold.owned.add(goods.id("rum").unwrap(), 30.0);
+        let ship = app
+            .world_mut()
+            .spawn((
+                Name::new("Sea Horse"),
+                sloop.build(20, 4, hold),
+                Timbers(0.5),
+                Purse(10_000),
+                Docked { port },
+            ))
+            .id();
+        let brig = class("Brig");
+        app.world_mut().write_message(BuyShip { ship, class: brig });
+        app.update();
+        let world = app.world();
+        assert_eq!(world.get::<ShipClass>(ship), Some(&brig));
+        assert_eq!(world.get::<Hull>(ship), Some(&brig.hull));
+        assert_eq!(world.get::<Complement>(ship), Some(&brig.complement));
+        assert_eq!(world.get::<Battery>(ship).unwrap().guns, brig.guns);
+        assert_eq!(world.get::<Timbers>(ship), Some(&Timbers(1.0)));
+        assert_eq!(world.get::<Crew>(ship).unwrap().count, 20);
+        let hold = world.get::<Hold>(ship).unwrap();
+        assert_eq!(hold.capacity_tons, brig.hold_tons);
+        assert_eq!(hold.owned.get(goods.id("rum").unwrap()), 30.0);
+        assert_eq!(world.get::<Name>(ship).unwrap().as_str(), "Sea Horse");
+        let paid = 10_000 - world.get::<Purse>(ship).unwrap().0;
+        assert!(0 < paid && paid < brig.price, "paid {paid}");
     }
 }

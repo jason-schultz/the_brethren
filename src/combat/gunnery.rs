@@ -59,6 +59,18 @@ pub struct Damage {
     pub men: f64,
 }
 
+impl Damage {
+    /// What it does to a ship `stoutness` times a sloop's: her timbers and
+    /// rigging suffer less, her men no less.
+    pub fn against(self, stoutness: f32) -> Self {
+        Self {
+            timbers: self.timbers / stoutness,
+            rigging: self.rigging / stoutness,
+            men: self.men,
+        }
+    }
+}
+
 pub fn damage(hits: f32) -> Damage {
     Damage {
         timbers: hits * TIMBERS_PER_HIT,
@@ -108,5 +120,15 @@ mod tests {
         let two = damage(2.0);
         assert!((two.timbers - 2.0 * damage(1.0).timbers).abs() < 1e-6);
         assert!(two.men > 0.0 && two.rigging > 0.0);
+    }
+
+    #[test]
+    fn a_stouter_ship_loses_less_timber_but_as_many_men() {
+        let hit = damage(4.0);
+        let stout = hit.against(2.0);
+        assert!((stout.timbers - hit.timbers / 2.0).abs() < 1e-6);
+        assert!((stout.rigging - hit.rigging / 2.0).abs() < 1e-6);
+        assert_eq!(stout.men, hit.men);
+        assert_eq!(hit.against(1.0), hit, "a sloop takes a sloop's damage");
     }
 }

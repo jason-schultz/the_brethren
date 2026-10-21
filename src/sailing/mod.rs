@@ -3,6 +3,7 @@
 pub mod physics;
 
 use bevy::prelude::*;
+use serde::Deserialize;
 
 use crate::alert::{Alert, AlertKind};
 use crate::map::Land;
@@ -12,8 +13,7 @@ use crate::wind::Wind;
 use physics::{approach, sail_speed, target_speed, true_wind_angle, turn_rate, turn_toward};
 
 /// Sailing characteristics of a ship class. Every vessel has one.
-/// These will move to data assets once there is more than one class.
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
+#[derive(Component, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[require(Heading, Speed, Helm, SailHandling, Rigging, Laden, Aground, Transform)]
 pub struct Hull {
     /// Speed with all sail set and the wind on the beam, in m/s.
@@ -22,30 +22,16 @@ pub struct Hull {
     pub headwind_factor: f32,
     /// Speed multiplier running straight before the wind.
     pub tailwind_factor: f32,
-    /// Turn rate at full speed, rad/s.
+    /// Turn rate at full speed, rad/s. The ships data gives it in degrees.
+    #[serde(rename = "turn_degrees", deserialize_with = "degrees")]
     pub max_turn_rate: f32,
     /// Rate of speed change, m/s².
     pub acceleration: f32,
 }
 
-impl Hull {
-    /// A gaff-rigged sloop.
-    pub const SLOOP: Self = Self {
-        speed_mps: 5.5,
-        headwind_factor: 0.75,
-        tailwind_factor: 1.2,
-        max_turn_rate: 12.0_f32.to_radians(),
-        acceleration: 0.5,
-    };
-
-    /// A ship's boat under a lugsail: handy, but slow.
-    pub const LONGBOAT: Self = Self {
-        speed_mps: 4.5,
-        headwind_factor: 0.8,
-        tailwind_factor: 1.15,
-        max_turn_rate: 20.0_f32.to_radians(),
-        acceleration: 0.8,
-    };
+/// Reads an angle given in degrees as radians.
+fn degrees<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
+    f32::deserialize(deserializer).map(f32::to_radians)
 }
 
 /// Direction the bow points: radians clockwise from north.
@@ -72,6 +58,13 @@ const REFLOAT_DISTANCE: f32 = 20.0;
 /// Whether the ship is stuck on land, unable to move along her heading.
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Aground(pub bool);
+
+/// A ship has run aground at `speed_mps`.
+#[derive(Message, Debug, Clone, Copy, PartialEq)]
+pub struct Grounded {
+    pub ship: Entity,
+    pub speed_mps: f32,
+}
 
 /// Fraction of her sail the crew can work, from 0 (none) to 1 (all plain
 /// sail). Short-handed ships are slower and turn more slowly. The crew
@@ -114,7 +107,8 @@ pub struct SailingPlugin;
 
 impl Plugin for SailingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(FixedUpdate, sail_ships.in_set(SimSet::Physics));
+        app.add_message::<Grounded>()
+            .add_systems(FixedUpdate, sail_ships.in_set(SimSet::Physics));
     }
 }
 
@@ -126,6 +120,7 @@ fn sail_ships(
     wind: Res<Wind>,
     land: Res<Land>,
     mut alerts: MessageWriter<Alert>,
+    mut groundings: MessageWriter<Grounded>,
     mut ships: Query<(
         Entity,
         &Hull,
@@ -171,13 +166,17 @@ fn sail_ships(
         let ahead = heading_to_direction(heading.0);
         let next = transform.translation + ahead * speed.0 * dt;
         if moving && land.contains(next) {
-            speed.0 = 0.0;
             if !aground.0 {
                 alerts.write(Alert {
                     ship,
                     kind: AlertKind::Aground,
                 });
+                groundings.write(Grounded {
+                    ship,
+                    speed_mps: speed.0,
+                });
             }
+            speed.0 = 0.0;
             aground.0 = true;
         } else {
             if moving && aground.0 && !land.contains(next + ahead * REFLOAT_DISTANCE) {
@@ -197,12 +196,13 @@ mod tests {
     use crate::map::LandMass;
     use crate::map::data::Terrain;
     use crate::math::{angle_between, direction_to_heading, normalize_heading, to_plane};
+    use crate::ship_class::ShipClass;
     use crate::test_support::{run_checked, run_seconds, sim_app};
 
     fn spawn_sloop(app: &mut App, heading: f32, sails: Sails) -> Entity {
         app.world_mut()
             .spawn((
-                Hull::SLOOP,
+                ShipClass::sloop().hull,
                 Heading(heading),
                 Helm {
                     course: heading,

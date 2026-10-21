@@ -70,24 +70,28 @@ mod tests {
     use std::f32::consts::{FRAC_PI_2, PI};
 
     use super::*;
+    use crate::ship_class::ShipClass;
 
     const EPS: f32 = 1e-5;
-    const SLOOP: Hull = Hull::SLOOP;
+
+    fn sloop() -> Hull {
+        ShipClass::sloop().hull
+    }
 
     #[test]
     fn wind_factor_hits_its_three_anchors() {
-        assert!((wind_factor(&SLOOP, 0.0) - SLOOP.headwind_factor).abs() < EPS);
-        assert!((wind_factor(&SLOOP, FRAC_PI_2) - 1.0).abs() < EPS);
-        assert!((wind_factor(&SLOOP, PI) - SLOOP.tailwind_factor).abs() < EPS);
+        assert!((wind_factor(&sloop(), 0.0) - sloop().headwind_factor).abs() < EPS);
+        assert!((wind_factor(&sloop(), FRAC_PI_2) - 1.0).abs() < EPS);
+        assert!((wind_factor(&sloop(), PI) - sloop().tailwind_factor).abs() < EPS);
     }
 
     #[test]
     fn wind_factor_rises_steadily_from_headwind_to_tailwind() {
         let steps = 1000;
-        let mut previous = wind_factor(&SLOOP, 0.0);
+        let mut previous = wind_factor(&sloop(), 0.0);
         for i in 1..=steps {
             let twa = PI * i as f32 / steps as f32;
-            let value = wind_factor(&SLOOP, twa);
+            let value = wind_factor(&sloop(), twa);
             assert!(value >= previous, "dipped at twa {twa}");
             assert!(value - previous < 0.01, "jump at twa {twa}");
             previous = value;
@@ -96,8 +100,8 @@ mod tests {
 
     #[test]
     fn every_heading_makes_headway() {
-        assert!(target_speed(&SLOOP, 0.0) > 0.0);
-        assert!(target_speed(&SLOOP, 0.0) < target_speed(&SLOOP, PI));
+        assert!(target_speed(&sloop(), 0.0) > 0.0);
+        assert!(target_speed(&sloop(), 0.0) < target_speed(&sloop(), PI));
     }
 
     #[test]
@@ -135,9 +139,9 @@ mod tests {
 
     #[test]
     fn steering_is_weak_at_rest_and_full_at_speed() {
-        assert!((turn_rate(&SLOOP, 0.0) - SLOOP.max_turn_rate * MIN_STEERAGE).abs() < EPS);
-        assert!((turn_rate(&SLOOP, SLOOP.speed_mps) - SLOOP.max_turn_rate).abs() < EPS);
-        assert!((turn_rate(&SLOOP, SLOOP.speed_mps * 3.0) - SLOOP.max_turn_rate).abs() < EPS);
+        assert!((turn_rate(&sloop(), 0.0) - sloop().max_turn_rate * MIN_STEERAGE).abs() < EPS);
+        assert!((turn_rate(&sloop(), sloop().speed_mps) - sloop().max_turn_rate).abs() < EPS);
+        assert!((turn_rate(&sloop(), sloop().speed_mps * 3.0) - sloop().max_turn_rate).abs() < EPS);
     }
 
     #[test]

@@ -8,9 +8,10 @@ use serde::Deserialize;
 
 use crate::alert::{Alert, AlertKind};
 use crate::allegiance::{DEALS_WITH, Favour};
-use crate::factions::{Colours, Nation, Relations, Standing};
+use crate::clock::WorldClock;
+use crate::factions::{Colours, GroupKind, Nation, Relations, Standing};
 use crate::navigation::{Arrival, Arrived};
-use crate::player::Player;
+use crate::pardons::{Plea, SeekPardon, under_grace};
 use crate::schedule::{FrameSet, SimSet};
 
 /// A town where ships can dock.
@@ -23,6 +24,19 @@ pub struct Port {
     pub town: Vec3,
     /// The places in town a captain can visit.
     pub locations: Vec<Location>,
+}
+
+/// Where in a town a group of `kind` does business: the navy and the
+/// governor at the governor's house, and the merchants at the exchange.
+/// Ports without the right office do business in the tavern.
+pub fn office(locations: &[Location], kind: GroupKind) -> Option<Location> {
+    let office = match kind {
+        GroupKind::Navy | GroupKind::Governor => Location::GovernorsHouse,
+        GroupKind::Merchants => Location::MerchantsExchange,
+    };
+    [office, Location::Tavern]
+        .into_iter()
+        .find(|location| locations.contains(location))
 }
 
 /// A place in a port town.
@@ -78,25 +92,40 @@ pub enum Refused {
     Enemy,
 }
 
-/// Ships dock on arriving, except the player at a port whose nation wants
-/// her or that doesn't welcome her colours: she's turned away, and lies off
-/// the anchorage.
+/// Ships dock on arriving, except a captain with a name (a [`Standing`])
+/// at a port whose nation wants her, or that doesn't welcome her colours:
+/// she's turned away, and lies off the anchorage. Under an Act of Grace, a
+/// port with a governor lets in the captain it wants, to take her pardon.
 fn dock_on_arrival(
     mut arrivals: MessageReader<Arrived>,
-    standing: Res<Standing>,
+    clock: Res<WorldClock>,
     relations: Res<Relations>,
-    players: Query<Option<&Colours>, With<Player>>,
+    captains: Query<(&Standing, Option<&Colours>)>,
     ports: Query<(&Port, &Favour)>,
     mut alerts: MessageWriter<Alert>,
+    mut pleas: MessageWriter<SeekPardon>,
     mut commands: Commands,
 ) {
     for arrived in arrivals.read() {
         let Arrival::Dock(port) = arrived.on_arrival else {
             continue;
         };
-        let refused = match (players.get(arrived.ship), ports.get(port)) {
-            (Ok(_), Ok((town, _))) if standing.wanted_by(town.flag) => Some(Refused::Wanted),
-            (Ok(Some(colours)), Ok((town, favour)))
+        let refused = match (captains.get(arrived.ship), ports.get(port)) {
+            (Ok((standing, _)), Ok((town, _)))
+                if town.locations.contains(&Location::GovernorsHouse)
+                    && under_grace(standing, town.flag, clock.elapsed) =>
+            {
+                pleas.write(SeekPardon {
+                    captain: arrived.ship,
+                    nation: town.flag,
+                    plea: Plea::Grace,
+                });
+                None
+            }
+            (Ok((standing, _)), Ok((town, _))) if standing.wanted_by(town.flag) => {
+                Some(Refused::Wanted)
+            }
+            (Ok((_, Some(colours))), Ok((town, favour)))
                 if !welcomes(town, favour, colours.0, &relations) =>
             {
                 Some(Refused::Enemy)
@@ -124,14 +153,14 @@ fn cast_off(mut orders: MessageReader<CastOff>, mut commands: Commands) {
 mod tests {
     use super::*;
     use crate::navigation::SailOrder;
-    use crate::sailing::Hull;
+    use crate::ship_class::ShipClass;
     use crate::test_support::{run_seconds, sim_app};
 
     fn spawn_port(app: &mut App, anchorage: Vec3) -> Entity {
         app.world_mut()
             .spawn((
                 Port {
-                    flag: Nation::England,
+                    flag: Nation::ENGLAND,
                     town: anchorage + Vec3::Z * 100.0,
                     locations: vec![Location::Market],
                 },
@@ -145,7 +174,7 @@ mod tests {
         let mut app = sim_app();
         let anchorage = Vec3::new(250.0, 0.0, 0.0);
         let port = spawn_port(&mut app, anchorage);
-        let ship = app.world_mut().spawn(Hull::SLOOP).id();
+        let ship = app.world_mut().spawn(ShipClass::sloop().hull).id();
         app.world_mut().write_message(SailOrder {
             ship,
             destination: anchorage,
@@ -166,7 +195,7 @@ mod tests {
         let mut app = sim_app();
         let anchorage = Vec3::new(250.0, 0.0, 0.0);
         spawn_port(&mut app, anchorage);
-        let ship = app.world_mut().spawn(Hull::SLOOP).id();
+        let ship = app.world_mut().spawn(ShipClass::sloop().hull).id();
         app.world_mut().write_message(SailOrder {
             ship,
             destination: anchorage,
@@ -180,7 +209,10 @@ mod tests {
     fn casting_off_leaves_port_even_while_paused() {
         let mut app = sim_app();
         let port = spawn_port(&mut app, Vec3::ZERO);
-        let ship = app.world_mut().spawn((Hull::SLOOP, Docked { port })).id();
+        let ship = app
+            .world_mut()
+            .spawn((ShipClass::sloop().hull, Docked { port }))
+            .id();
         app.world_mut().resource_mut::<Time<Virtual>>().pause();
         app.world_mut().write_message(CastOff { ship });
         app.update();

@@ -1,0 +1,158 @@
+// The nations of the West Indies, c. 1716, the groups each is made of, and
+// what deeds done to them are worth.
+//
+// Every nation has the same three groups (its navy, its governor, and its
+// merchants), because each kind of group does something the game knows:
+// the navy pays and hunts, the governor holds ports and grants letters of
+// marque, and the merchants post and pay for freight. A nation that isn't
+// lawful has no king's law: no pardons, and its navy is raiders, not
+// patrols. Add a nation by adding an entry; nothing else needs to change.
+//
+// Keys are how maps and saves name a nation. Standing runs from -100 to
+// 100; relations between nations too (war at -50 or below, hostile below
+// -25, allies at 50 and up).
+(
+    nations: [
+        (
+            key: "england",
+            name: "England",
+            adjective: "English",
+            colour: (0.9, 0.1, 0.1),
+            lawful: true,
+            // The first Act of Grace, days into the game; again every 120.
+            grace: Some(45.0),
+            // The player's standing with each of its groups at the start.
+            standing: 10.0,
+            // The chances an officer hired in its taverns is loyal,
+            // ambitious, or a turncoat.
+            officers: (0.6, 0.25, 0.15),
+            navy: (
+                name: "the Royal Navy",
+                ranks: ["Lieutenant", "Captain", "Commodore"],
+                pitch: "A King's commission, the King's pay, and a squadron to stand by you.",
+            ),
+            governor: (
+                name: "the Governor of Jamaica",
+                ranks: ["Privateer", "Commissioner", "Councillor"],
+                pitch: "The Crown pays on time, and its navy guards its own. Serve the governor and you serve the King.",
+            ),
+            merchants: (
+                name: "the Jamaica merchants",
+                ranks: ["Associate", "Partner", "Alderman"],
+                pitch: "The richest trade in the Indies, for a captain who isn't particular about whose flag.",
+            ),
+            // Its ships, by name and class (from the ships data): its
+            // merchantmen, and its navy (the Jamaica station's cruisers).
+            fleet: (
+                merchants: [
+                    ("Swallow", "Sloop"),
+                    ("Mary Ann", "Brigantine"),
+                    ("Endeavour", "Fluyt"),
+                    ("Two Brothers", "Sloop"),
+                    ("Dove", "Schooner"),
+                ],
+                navy: [("HMS Swift", "Brig"), ("HMS Ferret", "Sloop")],
+            ),
+        ),
+        (
+            key: "spain",
+            name: "Spain",
+            adjective: "Spanish",
+            colour: (1.0, 0.8, 0.0),
+            lawful: true,
+            grace: Some(105.0),
+            standing: 0.0,
+            officers: (0.6, 0.25, 0.15),
+            navy: (
+                name: "the Armada de Barlovento",
+                ranks: ["Lieutenant", "Captain", "Commodore"],
+                pitch: "A King's commission, the King's pay, and a squadron to stand by you.",
+            ),
+            governor: (
+                name: "the Governor of Cuba",
+                ranks: ["Privateer", "Commissioner", "Councillor"],
+                pitch: "The Crown pays on time, and its navy guards its own. Serve the governor and you serve the King.",
+            ),
+            merchants: (
+                name: "the Cuban merchants",
+                ranks: ["Associate", "Partner", "Alderman"],
+                pitch: "The richest trade in the Indies, for a captain who isn't particular about whose flag.",
+            ),
+            // A guarda costa out of Santiago.
+            fleet: (
+                merchants: [("Santa Rosa", "Fluyt"), ("San José", "Sloop")],
+                navy: [("San Miguel", "Brigantine")],
+            ),
+        ),
+        (
+            key: "pirates",
+            name: "the Brethren",
+            adjective: "pirate",
+            // Skull and bones: the black flag would vanish on a dark sea.
+            colour: (0.95, 0.93, 0.85),
+            lawful: false,
+            grace: None,
+            standing: 0.0,
+            // Pirate havens breed ambition.
+            officers: (0.4, 0.45, 0.15),
+            navy: (
+                name: "the Flying Gang",
+                ranks: ["Gentleman of Fortune", "Captain of Note", "Pirate Lord"],
+                pitch: "No masters, equal shares, and the whole sea for the taking.",
+            ),
+            governor: (
+                name: "the Nassau council",
+                ranks: ["Freebooter", "Councillor", "Elder"],
+                pitch: "Nassau answers to no king. Help us keep it so.",
+            ),
+            merchants: (
+                name: "the fences of Nassau",
+                ranks: ["Runner", "Partner", "Master Fence"],
+                pitch: "We buy what others won't ask about, and pay in silver.",
+            ),
+            // Hornigold's, Teach's, and Bonnet's sloops.
+            fleet: (
+                merchants: [],
+                navy: [("Ranger", "Sloop"), ("Adventure", "Brigantine"), ("Revenge", "Sloop")],
+            ),
+        ),
+    ],
+    // How the nations stood in 1716, and drift back to: England and Spain
+    // at an uneasy peace since Utrecht, both preyed on by the Brethren, and
+    // Spain's guarda costas at war with them. Pairs not listed start at 0.
+    relations: [
+        ("england", "spain", -20.0),
+        ("england", "pirates", -30.0),
+        ("spain", "pirates", -60.0),
+    ],
+    reputation: (
+        // The rest of a nation takes this share of what a deed does to one
+        // of its groups.
+        kin_share: 0.5,
+        // A nation's navy takes this share of a blow struck against its
+        // enemies, as credit, or against its allies, as offence.
+        neighbour_share: 0.3333333,
+        // What each deed is worth: standing with the group it touched,
+        // relations between the doer's colours and its nation, and whether
+        // it's a blow its enemies applaud and its allies resent.
+        deeds: {
+            Attacked: (standing: -15.0, diplomacy: -2.0, blow: true),
+            Captured: (standing: -20.0, diplomacy: -3.0, blow: true),
+            Sank: (standing: -25.0, diplomacy: -4.0, blow: true),
+            Delivered: (standing: 3.0, diplomacy: 1.0, blow: false),
+            // That's about the captain, not her colours.
+            LostCommand: (standing: -10.0, diplomacy: 0.0, blow: false),
+            RaisedPort: (standing: -15.0, diplomacy: -25.0, blow: true),
+            Introduced: (standing: 20.0, diplomacy: 1.0, blow: false),
+            Escorted: (standing: 5.0, diplomacy: 1.0, blow: false),
+            // A failure, not an offence.
+            LostWard: (standing: -5.0, diplomacy: 0.0, blow: false),
+            // A wreck belongs to her nation; picking her bones is theft,
+            // but not war.
+            Salvaged: (standing: -5.0, diplomacy: -1.0, blow: false),
+            // Lying about a loss and being found out: worse than most of
+            // what a lie would hide.
+            FalseReport: (standing: -30.0, diplomacy: 0.0, blow: false),
+        },
+    ),
+)

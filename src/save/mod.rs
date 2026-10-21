@@ -2,7 +2,8 @@
 //!
 //! The map, goods, and ship classes are built into the game, so a save holds
 //! only what changes: the clock, nations' relations, ports' stocks and
-//! allegiance, ships, contracts, and officers. Things refer to each other
+//! allegiance, ships (with their captains' standing and service),
+//! contracts, escorts, officers, wrecks, and the ledger of news. Things refer to each other
 //! by name rather than by entity, which keeps the file readable and stable. Ships under way are given their voyage again as an
 //! ordinary [`SailOrder`], so routes are planned the usual way.
 
@@ -21,7 +22,10 @@ use crate::combat::{Battery, Timbers};
 use crate::crew::Crew;
 use crate::economy::jobs::{Carrier, Job};
 use crate::economy::market::Market;
-use crate::factions::{Colours, NATIONS, Nation, Relations, Standing, pairs};
+use crate::escorts::Escort;
+use crate::factions::{
+    CaptainId, Colours, DeedKind, Group, Nation, Relations, Standing, groups, nations, pairs,
+};
 use crate::goods::{GoodId, Goods};
 use crate::math::heading_to_rotation;
 use crate::merchants::{Merchant, Plan};
@@ -33,10 +37,16 @@ use crate::port::{Docked, Port};
 use crate::prizes::{Prize, PrizeOrders};
 use crate::raiders::{Raid, Raider};
 use crate::sailing::{Aground, Heading, Rigging, Speed};
+use crate::service::{Post, Service};
 use crate::ship_class::ShipClass;
+use crate::word::{
+    Answered, DeedNews, Fate, Happening, Heard, Knowledge, Ledger, Loss, News, NewsId, Place,
+    Purpose, Tale,
+};
+use crate::wrecks::Wreck;
 
 /// Bumped whenever the format changes incompatibly.
-pub const SAVE_VERSION: u32 = 7;
+pub const SAVE_VERSION: u32 = 14;
 
 /// A saved game.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -44,14 +54,159 @@ pub struct SaveGame {
     pub version: u32,
     /// [`WorldClock`] seconds.
     pub clock: f64,
-    /// The player's standing with each nation.
-    pub standing: Vec<(Nation, f32)>,
     /// How each pair of nations stands with each other.
     pub relations: Vec<([Nation; 2], f32)>,
     pub ports: Vec<PortSave>,
     pub ships: Vec<ShipSave>,
     pub jobs: Vec<JobSave>,
+    pub escorts: Vec<EscortSave>,
     pub officers: Vec<OfficerSave>,
+    pub wrecks: Vec<WreckSave>,
+    /// The ledger of news.
+    pub ledger: LedgerSave,
+}
+
+/// A [`Wreck`], with ships by name.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct WreckSave {
+    pub name: String,
+    pub position: [f32; 3],
+    pub nation: Option<Nation>,
+    pub cargo: Cargo,
+    pub purse: u32,
+    pub until: f64,
+    pub salvors: Vec<String>,
+}
+
+/// The [`Ledger`], with ships, ports, and goods by name.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct LedgerSave {
+    pub next: u64,
+    pub news: Vec<NewsSave>,
+    pub losses: Vec<LossSave>,
+    pub answered: Vec<AnsweredSave>,
+}
+
+/// An [`Answered`], with ships by name. Only fights between ships still
+/// afloat are kept.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct AnsweredSave {
+    pub doer: String,
+    pub victim: String,
+    pub nation: Nation,
+    pub kind: DeedKind,
+    pub at: f64,
+}
+
+/// A [`Loss`], with ships by name, or `None` for those no longer afloat.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct LossSave {
+    pub ship: Option<String>,
+    pub name: String,
+    pub group: Option<Group>,
+    pub fate: Fate<Option<String>>,
+    pub at: f64,
+    pub nearby: Vec<(Option<String>, String)>,
+}
+
+/// One piece of [`News`]. Ships it names that are no longer afloat are
+/// `None`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct NewsSave {
+    pub id: u64,
+    pub at: f64,
+    pub place: PlaceSave,
+    pub event: HappeningSave,
+    pub known_at: Vec<String>,
+    pub carriers: Vec<String>,
+    pub boats: Vec<(String, f64)>,
+    pub heard_by: Vec<Nation>,
+}
+
+/// A [`Place`], with ports by name.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum PlaceSave {
+    Port(String),
+    Sea([f32; 3]),
+}
+
+/// A [`Happening`], with ships, ports, and goods by name, and `None` for a
+/// ship no longer afloat.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum HappeningSave {
+    Sailed {
+        ship: Option<String>,
+        name: String,
+        purpose: PurposeSave,
+        due: Option<f64>,
+    },
+    Overdue {
+        ship: Option<String>,
+        name: String,
+        from: String,
+        bound_for: String,
+        suspects: Vec<(Option<String>, String)>,
+    },
+    Deed {
+        kind: DeedKind,
+        group: Group,
+        doer: Option<String>,
+        doer_name: String,
+        captain: Option<u32>,
+        colours: Option<Nation>,
+        victim: Option<(Option<String>, String)>,
+        standing: Vec<(Group, f32)>,
+    },
+    Wrecked {
+        ship: Option<String>,
+        name: String,
+        nation: Option<Nation>,
+        cargo: Option<(String, u32)>,
+        wreck: Option<String>,
+    },
+    Account {
+        teller: Option<String>,
+        teller_name: String,
+        captain: Option<u32>,
+        ship: Option<String>,
+        name: String,
+        says: Fate<Option<String>>,
+        blames: Option<String>,
+    },
+}
+
+/// A merchant's request for an [`Escort`], with ships and ports by name.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct EscortSave {
+    /// `None` once she's lost.
+    pub ward: Option<String>,
+    pub nation: Nation,
+    pub origin: String,
+    pub destination: String,
+    pub fee: u32,
+    /// The ship that took it on, if any.
+    pub escort: Option<String>,
+    /// When the ward was lost, if she was.
+    pub lost_at: Option<f64>,
+}
+
+/// A [`Purpose`], with ports and goods by name.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum PurposeSave {
+    Carrying {
+        good: String,
+        quantity: u32,
+        bound_for: String,
+    },
+    Cruising,
+}
+
+/// How a captain [`Heard`] of something, with ports by name.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum HeardSave {
+    Saw,
+    Tavern(String),
+    Service(Group),
 }
 
 /// An officer, with where he is by name.
@@ -111,6 +266,28 @@ pub struct ShipSave {
     /// The port she lies at.
     pub docked: Option<String>,
     pub voyage: Option<Voyage>,
+    /// Her captain's name with the nations, if she has one.
+    pub record: Option<RecordSave>,
+}
+
+/// A captain's record: her [`Standing`] with every group, the groups she
+/// serves, and what she's heard.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct RecordSave {
+    pub captain: u32,
+    pub standing: Vec<(Group, f32)>,
+    pub service: Vec<Post>,
+    pub knowledge: Vec<TaleSave>,
+}
+
+/// A [`Tale`] a captain heard, with ships, ports, and goods by name.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TaleSave {
+    pub news: u64,
+    pub at: f64,
+    pub place: PlaceSave,
+    pub event: HappeningSave,
+    pub heard: HeardSave,
 }
 
 /// Who commands a ship.
@@ -144,6 +321,7 @@ pub enum PlanSave {
     AtSea,
     InPort { until: f64 },
     Loading { bound_for: String, sails_at: f64 },
+    Salvaging { wreck: String },
 }
 
 /// Where a ship under way is bound.
@@ -164,6 +342,8 @@ pub struct JobSave {
     pub deadline: f64,
     /// The ship carrying it, if taken.
     pub carrier: Option<String>,
+    /// The group it introduces the player to, if it's an errand for her.
+    pub introduction: Option<Group>,
 }
 
 /// Why a save can't be loaded. A failed load leaves the game untouched.
@@ -247,6 +427,263 @@ fn name_of(names: &Query<&Name>, entity: Entity) -> String {
         .map_or_else(|_| "?".into(), |n| n.to_string())
 }
 
+fn purpose_save(goods: &Goods, names: &Query<&Name>, purpose: Purpose) -> PurposeSave {
+    match purpose {
+        Purpose::Carrying {
+            good,
+            quantity,
+            bound_for,
+        } => PurposeSave::Carrying {
+            good: goods.get(good).key.clone(),
+            quantity,
+            bound_for: name_of(names, bound_for),
+        },
+        Purpose::Cruising => PurposeSave::Cruising,
+    }
+}
+
+fn purpose_load(goods: &Goods, names: &Names, purpose: &PurposeSave) -> Result<Purpose, LoadError> {
+    Ok(match purpose {
+        PurposeSave::Carrying {
+            good: key,
+            quantity,
+            bound_for,
+        } => Purpose::Carrying {
+            good: good(goods, key)?,
+            quantity: *quantity,
+            bound_for: names.port(bound_for)?,
+        },
+        PurposeSave::Cruising => Purpose::Cruising,
+    })
+}
+
+fn heard_save(names: &Query<&Name>, heard: Heard) -> HeardSave {
+    match heard {
+        Heard::Saw => HeardSave::Saw,
+        Heard::Tavern(port) => HeardSave::Tavern(name_of(names, port)),
+        Heard::Service(group) => HeardSave::Service(group),
+    }
+}
+
+fn heard_load(names: &Names, heard: &HeardSave) -> Result<Heard, LoadError> {
+    Ok(match heard {
+        HeardSave::Saw => Heard::Saw,
+        HeardSave::Tavern(port) => Heard::Tavern(names.port(port)?),
+        HeardSave::Service(group) => Heard::Service(*group),
+    })
+}
+
+/// A ship or wreck named in the news, if she's still about.
+fn afloat_save(names: &Query<&Name>, ship: Entity) -> Option<String> {
+    names.get(ship).ok().map(|name| name.to_string())
+}
+
+/// A ship or wreck named in the news, or nobody if she's gone.
+fn afloat_load(names: &Names, ship: &Option<String>) -> Entity {
+    ship.as_deref()
+        .and_then(|name| find(&names.ships, name))
+        .unwrap_or(Entity::PLACEHOLDER)
+}
+
+fn place_save(names: &Query<&Name>, place: Place) -> PlaceSave {
+    match place {
+        Place::Port(port) => PlaceSave::Port(name_of(names, port)),
+        Place::Sea(at) => PlaceSave::Sea(at.to_array()),
+    }
+}
+
+fn place_load(names: &Names, place: &PlaceSave) -> Result<Place, LoadError> {
+    Ok(match place {
+        PlaceSave::Port(port) => Place::Port(names.port(port)?),
+        PlaceSave::Sea(at) => Place::Sea(Vec3::from_array(*at)),
+    })
+}
+
+fn happening_save(goods: &Goods, names: &Query<&Name>, event: &Happening) -> HappeningSave {
+    match event {
+        Happening::Sailed {
+            ship,
+            name,
+            purpose,
+            due,
+        } => HappeningSave::Sailed {
+            ship: afloat_save(names, *ship),
+            name: name.clone(),
+            purpose: purpose_save(goods, names, *purpose),
+            due: *due,
+        },
+        Happening::Overdue {
+            ship,
+            name,
+            from,
+            bound_for,
+            suspects,
+        } => HappeningSave::Overdue {
+            ship: afloat_save(names, *ship),
+            name: name.clone(),
+            from: name_of(names, *from),
+            bound_for: name_of(names, *bound_for),
+            suspects: suspects
+                .iter()
+                .map(|(ship, name)| (afloat_save(names, *ship), name.clone()))
+                .collect(),
+        },
+        Happening::Deed(deed) => HappeningSave::Deed {
+            kind: deed.kind,
+            group: deed.group,
+            doer: afloat_save(names, deed.doer),
+            doer_name: deed.doer_name.clone(),
+            captain: deed.captain.map(|captain| captain.0),
+            colours: deed.colours,
+            victim: deed
+                .victim
+                .as_ref()
+                .map(|(ship, name)| (afloat_save(names, *ship), name.clone())),
+            standing: deed.standing.clone(),
+        },
+        Happening::Wrecked {
+            ship,
+            name,
+            nation,
+            cargo,
+            wreck,
+        } => HappeningSave::Wrecked {
+            ship: afloat_save(names, *ship),
+            name: name.clone(),
+            nation: *nation,
+            cargo: cargo.map(|(good, tons)| (goods.get(good).key.clone(), tons)),
+            wreck: wreck.and_then(|wreck| afloat_save(names, wreck)),
+        },
+        Happening::Account {
+            teller,
+            teller_name,
+            captain,
+            ship,
+            name,
+            says,
+            blames,
+        } => HappeningSave::Account {
+            teller: afloat_save(names, *teller),
+            teller_name: teller_name.clone(),
+            captain: captain.map(|captain| captain.0),
+            ship: afloat_save(names, *ship),
+            name: name.clone(),
+            says: says.map(|by| afloat_save(names, by)),
+            blames: blames.clone(),
+        },
+    }
+}
+
+fn happening_load(
+    goods: &Goods,
+    names: &Names,
+    event: &HappeningSave,
+) -> Result<Happening, LoadError> {
+    Ok(match event {
+        HappeningSave::Sailed {
+            ship,
+            name,
+            purpose,
+            due,
+        } => Happening::Sailed {
+            ship: afloat_load(names, ship),
+            name: name.clone(),
+            purpose: purpose_load(goods, names, purpose)?,
+            due: *due,
+        },
+        HappeningSave::Overdue {
+            ship,
+            name,
+            from,
+            bound_for,
+            suspects,
+        } => Happening::Overdue {
+            ship: afloat_load(names, ship),
+            name: name.clone(),
+            from: names.port(from)?,
+            bound_for: names.port(bound_for)?,
+            suspects: suspects
+                .iter()
+                .map(|(ship, name)| (afloat_load(names, ship), name.clone()))
+                .collect(),
+        },
+        HappeningSave::Deed {
+            kind,
+            group,
+            doer,
+            doer_name,
+            captain,
+            colours,
+            victim,
+            standing,
+        } => Happening::Deed(DeedNews {
+            kind: *kind,
+            group: *group,
+            doer: afloat_load(names, doer),
+            doer_name: doer_name.clone(),
+            captain: captain.map(CaptainId),
+            colours: *colours,
+            victim: victim
+                .as_ref()
+                .map(|(ship, name)| (afloat_load(names, ship), name.clone())),
+            standing: standing.clone(),
+        }),
+        HappeningSave::Wrecked {
+            ship,
+            name,
+            nation,
+            cargo,
+            wreck,
+        } => Happening::Wrecked {
+            ship: afloat_load(names, ship),
+            name: name.clone(),
+            nation: *nation,
+            cargo: cargo
+                .as_ref()
+                .map(|(key, tons)| Ok::<_, LoadError>((good(goods, key)?, *tons)))
+                .transpose()?,
+            wreck: wreck.as_ref().map(|_| afloat_load(names, wreck)),
+        },
+        HappeningSave::Account {
+            teller,
+            teller_name,
+            captain,
+            ship,
+            name,
+            says,
+            blames,
+        } => Happening::Account {
+            teller: afloat_load(names, teller),
+            teller_name: teller_name.clone(),
+            captain: captain.map(CaptainId),
+            ship: afloat_load(names, ship),
+            name: name.clone(),
+            says: says.clone().map(|by| afloat_load(names, &by)),
+            blames: blames.clone(),
+        },
+    })
+}
+
+fn tale_save(goods: &Goods, names: &Query<&Name>, tale: &Tale) -> TaleSave {
+    TaleSave {
+        news: tale.news.0,
+        at: tale.at,
+        place: place_save(names, tale.place),
+        event: happening_save(goods, names, &tale.event),
+        heard: heard_save(names, tale.heard),
+    }
+}
+
+fn tale_load(goods: &Goods, names: &Names, tale: &TaleSave) -> Result<Tale, LoadError> {
+    Ok(Tale {
+        news: NewsId(tale.news),
+        at: tale.at,
+        place: place_load(names, &tale.place)?,
+        event: happening_load(goods, names, &tale.event)?,
+        heard: heard_load(names, &tale.heard)?,
+    })
+}
+
 /// Captures the world's state.
 pub fn capture(world: &mut World) -> SaveGame {
     world
@@ -256,7 +693,6 @@ pub fn capture(world: &mut World) -> SaveGame {
 
 fn capture_system(
     clock: Res<WorldClock>,
-    standing: Res<Standing>,
     relations: Res<Relations>,
     goods: Res<Goods>,
     names: Query<&Name>,
@@ -276,19 +712,24 @@ fn capture_system(
         (&Battery, &Timbers, &Rigging),
         (&Crew, &Purse, &Hold, Option<&Colours>),
         Option<&Docked>,
-        Option<&Route>,
+        (
+            Option<&Route>,
+            Option<(&CaptainId, &Standing, &Service, &Knowledge)>,
+        ),
     )>,
     jobs: Query<(&Job, Option<&Carrier>)>,
+    escorts: Query<&Escort>,
     officers: Query<(&Name, &Officer, &Berth)>,
+    wrecks: Query<(&Name, &Transform, &Wreck)>,
+    ledger: Res<Ledger>,
 ) -> SaveGame {
     let ports = ports
         .iter()
         .map(|(name, port, favour, market)| PortSave {
             name: name.to_string(),
             flag: port.flag,
-            favour: NATIONS
-                .iter()
-                .map(|&nation| (nation, favour.of(nation)))
+            favour: nations()
+                .map(|nation| (nation, favour.of(nation)))
                 .collect(),
             stock: market
                 .entries
@@ -297,10 +738,20 @@ fn capture_system(
                 .collect(),
         })
         .collect();
-    let ships = ships
+    let ships: Vec<ShipSave> = ships
         .iter()
         .filter_map(
-            |(name, class, command, transform, motion, fighting, aboard, docked, route)| {
+            |(
+                name,
+                class,
+                command,
+                transform,
+                motion,
+                fighting,
+                aboard,
+                docked,
+                (route, record),
+            )| {
                 let (player, merchant, prize, patrol, raider) = command;
                 let captain = match (player, merchant, prize) {
                     (true, ..) => Captain::Player,
@@ -326,6 +777,9 @@ fn capture_system(
                             bound_for: name_of(&names, bound_for),
                             sails_at,
                         },
+                        Plan::Salvaging { wreck } => PlanSave::Salvaging {
+                            wreck: name_of(&names, wreck),
+                        },
                     }),
                     // A ship nobody commands has nothing to save.
                     (false, None, None) => return None,
@@ -350,6 +804,16 @@ fn capture_system(
                     owned: cargo_save(&goods, &hold.owned),
                     consigned: cargo_save(&goods, &hold.consigned),
                     docked: docked.map(|docked| name_of(&names, docked.port)),
+                    record: record.map(|(id, standing, service, knowledge)| RecordSave {
+                        captain: id.0,
+                        standing: groups().map(|group| (group, standing.of(group))).collect(),
+                        service: service.0.clone(),
+                        knowledge: knowledge
+                            .0
+                            .iter()
+                            .map(|tale| tale_save(&goods, &names, tale))
+                            .collect(),
+                    }),
                     voyage: route.and_then(|route| {
                         Some(Voyage {
                             destination: route.waypoints.back()?.to_array(),
@@ -363,6 +827,12 @@ fn capture_system(
             },
         )
         .collect();
+    let saved_names: Vec<String> = ships.iter().map(|ship| ship.name.clone()).collect();
+    let saved = |ship| {
+        names
+            .get(ship)
+            .is_ok_and(|name| saved_names.iter().any(|saved| saved == name.as_str()))
+    };
     let jobs = jobs
         .iter()
         .map(|(job, carrier)| JobSave {
@@ -373,6 +843,7 @@ fn capture_system(
             payment: job.payment,
             deadline: job.deadline,
             carrier: carrier.map(|carrier| name_of(&names, carrier.0)),
+            introduction: job.introduction,
         })
         .collect();
     let officers = officers
@@ -400,17 +871,104 @@ fn capture_system(
     SaveGame {
         version: SAVE_VERSION,
         clock: clock.elapsed,
-        standing: NATIONS
-            .iter()
-            .map(|&nation| (nation, standing.with(nation)))
-            .collect(),
         relations: pairs()
             .map(|pair| (pair, relations.between(pair[0], pair[1])))
             .collect(),
         ports,
         ships,
         jobs,
+        // Only what names saved ships: a save naming a ship it hasn't got
+        // can't be loaded.
+        escorts: escorts
+            .iter()
+            .filter(|escort| {
+                (saved(escort.ward) || escort.lost_at.is_some()) && escort.escort.is_none_or(saved)
+            })
+            .map(|escort| EscortSave {
+                ward: afloat_save(&names, escort.ward),
+                nation: escort.nation,
+                origin: name_of(&names, escort.origin),
+                destination: name_of(&names, escort.destination),
+                fee: escort.fee,
+                escort: escort.escort.map(|ship| name_of(&names, ship)),
+                lost_at: escort.lost_at,
+            })
+            .collect(),
         officers,
+        wrecks: wrecks
+            .iter()
+            .map(|(name, at, wreck)| WreckSave {
+                name: name.to_string(),
+                position: at.translation.to_array(),
+                nation: wreck.nation,
+                cargo: cargo_save(&goods, &wreck.cargo),
+                purse: wreck.purse,
+                until: wreck.until,
+                salvors: wreck
+                    .salvors
+                    .iter()
+                    .filter_map(|&ship| afloat_save(&names, ship))
+                    .collect(),
+            })
+            .collect(),
+        ledger: LedgerSave {
+            next: ledger.next.0,
+            losses: ledger
+                .losses
+                .iter()
+                .map(|loss| LossSave {
+                    ship: afloat_save(&names, loss.ship),
+                    name: loss.name.clone(),
+                    group: loss.group,
+                    fate: loss.fate.map(|by| afloat_save(&names, by)),
+                    at: loss.at,
+                    nearby: loss
+                        .nearby
+                        .iter()
+                        .map(|(ship, name)| (afloat_save(&names, *ship), name.clone()))
+                        .collect(),
+                })
+                .collect(),
+            answered: ledger
+                .answered
+                .iter()
+                .filter_map(|answered| {
+                    Some(AnsweredSave {
+                        doer: afloat_save(&names, answered.doer)?,
+                        victim: afloat_save(&names, answered.victim)?,
+                        nation: answered.nation,
+                        kind: answered.kind,
+                        at: answered.at,
+                    })
+                })
+                .collect(),
+            news: ledger
+                .news
+                .iter()
+                .map(|news| NewsSave {
+                    id: news.id.0,
+                    at: news.at,
+                    place: place_save(&names, news.place),
+                    event: happening_save(&goods, &names, &news.event),
+                    known_at: news
+                        .known_at
+                        .iter()
+                        .map(|&port| name_of(&names, port))
+                        .collect(),
+                    carriers: news
+                        .carriers
+                        .iter()
+                        .filter_map(|&ship| afloat_save(&names, ship))
+                        .collect(),
+                    boats: news
+                        .boats
+                        .iter()
+                        .map(|&(port, arrives)| (name_of(&names, port), arrives))
+                        .collect(),
+                    heard_by: news.heard_by.clone(),
+                })
+                .collect(),
+        },
     }
 }
 
@@ -472,13 +1030,46 @@ pub fn restore(world: &mut World, save: &SaveGame) -> Result<(), LoadError> {
             return Err(LoadError::Unknown(format!("ship {carrier}")));
         }
     }
+    let known_ship = |ship: &String| {
+        if ship_names.contains(&ship.as_str()) {
+            Ok(())
+        } else {
+            Err(LoadError::Unknown(format!("ship {ship}")))
+        }
+    };
+    for escort in &save.escorts {
+        escort.ward.iter().try_for_each(known_ship)?;
+        escort.escort.iter().try_for_each(known_ship)?;
+        names.port(&escort.origin)?;
+        names.port(&escort.destination)?;
+    }
+    for wreck in &save.wrecks {
+        cargo_load(&goods, &wreck.cargo)?;
+    }
+    // The news may name ships long gone, but its ports and goods must be
+    // this game's.
+    for news in &save.ledger.news {
+        place_load(&names, &news.place)?;
+        happening_load(&goods, &names, &news.event)?;
+        for port in news
+            .known_at
+            .iter()
+            .chain(news.boats.iter().map(|(port, _)| port))
+        {
+            names.port(port)?;
+        }
+    }
+    for tale in save
+        .ships
+        .iter()
+        .filter_map(|ship| ship.record.as_ref())
+        .flat_map(|record| &record.knowledge)
+    {
+        tale_load(&goods, &names, tale)?;
+    }
 
     // Everything checks out: replace the world's state.
     world.resource_mut::<WorldClock>().elapsed = save.clock;
-    let mut standing = world.resource_mut::<Standing>();
-    for &(nation, value) in &save.standing {
-        standing.set(nation, value);
-    }
     let mut relations = world.resource_mut::<Relations>();
     for &([a, b], value) in &save.relations {
         relations.set(a, b, value);
@@ -503,7 +1094,13 @@ pub fn restore(world: &mut World, save: &SaveGame) -> Result<(), LoadError> {
         }
     }
     let old: Vec<Entity> = world
-        .query_filtered::<Entity, Or<(With<ShipClass>, With<Job>, With<Officer>)>>()
+        .query_filtered::<Entity, Or<(
+            With<ShipClass>,
+            With<Job>,
+            With<Escort>,
+            With<Officer>,
+            With<Wreck>,
+        )>>()
         .iter(world)
         .collect();
     for entity in old {
@@ -527,15 +1124,60 @@ pub fn restore(world: &mut World, save: &SaveGame) -> Result<(), LoadError> {
         if let Some(nation) = saved.colours {
             ship.insert(Colours(nation));
         }
+
         if let Some(docked) = docked {
             ship.insert(docked);
         }
         names.ships.push((saved.name.clone(), ship.id()));
     }
-    // Merchant plans and voyages name ports and ships, so they go in once
-    // every ship exists.
+    for wreck in &save.wrecks {
+        let entity = world
+            .spawn((
+                Name::new(wreck.name.clone()),
+                Wreck {
+                    nation: wreck.nation,
+                    cargo: cargo_load(&goods, &wreck.cargo)?,
+                    purse: wreck.purse,
+                    until: wreck.until,
+                    salvors: Vec::new(),
+                },
+                Transform::from_translation(Vec3::from_array(wreck.position)),
+            ))
+            .id();
+        names.ships.push((wreck.name.clone(), entity));
+    }
+    for wreck in &save.wrecks {
+        let salvors = wreck
+            .salvors
+            .iter()
+            .filter_map(|ship| find(&names.ships, ship))
+            .collect();
+        let entity = names.ship(&wreck.name)?;
+        if let Some(mut saved) = world.get_mut::<Wreck>(entity) {
+            saved.salvors = salvors;
+        }
+    }
+    // Merchant plans, voyages, and what captains have heard name ports and
+    // ships, so they go in once every ship exists.
     for ship in &save.ships {
         let entity = names.ship(&ship.name)?;
+        if let Some(record) = &ship.record {
+            let mut standing = Standing::default();
+            for &(group, value) in &record.standing {
+                standing.set_group(group, value);
+            }
+            let knowledge = record
+                .knowledge
+                .iter()
+                .map(|tale| tale_load(&goods, &names, tale))
+                .collect::<Result<_, LoadError>>()?;
+            world.entity_mut(entity).insert((
+                CaptainId(record.captain),
+                standing,
+                Service(record.service.clone()),
+                Knowledge(knowledge),
+            ));
+        }
         if let Captain::Prize { captor, orders } = &ship.captain {
             let captor = names.ship(captor)?;
             let orders = match orders {
@@ -556,6 +1198,10 @@ pub fn restore(world: &mut World, save: &SaveGame) -> Result<(), LoadError> {
                     bound_for: names.port(bound_for)?,
                     sails_at: *sails_at,
                 },
+                // A wreck gone since is nothing to dive on: she'll make port.
+                PlanSave::Salvaging { wreck } => {
+                    find(&names.ships, wreck).map_or(Plan::AtSea, |wreck| Plan::Salvaging { wreck })
+                }
             };
             world.entity_mut(entity).insert(Merchant { plan });
         }
@@ -603,11 +1249,94 @@ pub fn restore(world: &mut World, save: &SaveGame) -> Result<(), LoadError> {
             destination: names.port(&job.destination)?,
             payment: job.payment,
             deadline: job.deadline,
+            introduction: job.introduction,
         });
         if let Some(carrier) = &job.carrier {
             entity.insert(Carrier(names.ship(carrier)?));
         }
     }
+    for escort in &save.escorts {
+        let escort = Escort {
+            ward: afloat_load(&names, &escort.ward),
+            nation: escort.nation,
+            origin: names.port(&escort.origin)?,
+            destination: names.port(&escort.destination)?,
+            fee: escort.fee,
+            escort: escort
+                .escort
+                .as_ref()
+                .map(|ship| names.ship(ship))
+                .transpose()?,
+            lost_at: escort.lost_at,
+        };
+        world.spawn(escort);
+    }
+    let news = save
+        .ledger
+        .news
+        .iter()
+        .map(|news| {
+            Ok(News {
+                id: NewsId(news.id),
+                at: news.at,
+                place: place_load(&names, &news.place)?,
+                event: happening_load(&goods, &names, &news.event)?,
+                known_at: news
+                    .known_at
+                    .iter()
+                    .map(|port| names.port(port))
+                    .collect::<Result<_, _>>()?,
+                carriers: news
+                    .carriers
+                    .iter()
+                    .filter_map(|ship| find(&names.ships, ship))
+                    .collect(),
+                boats: news
+                    .boats
+                    .iter()
+                    .map(|(port, arrives)| Ok((names.port(port)?, *arrives)))
+                    .collect::<Result<_, LoadError>>()?,
+                heard_by: news.heard_by.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, LoadError>>()?;
+    let losses = save
+        .ledger
+        .losses
+        .iter()
+        .map(|loss| Loss {
+            ship: afloat_load(&names, &loss.ship),
+            name: loss.name.clone(),
+            group: loss.group,
+            fate: loss.fate.clone().map(|by| afloat_load(&names, &by)),
+            at: loss.at,
+            nearby: loss
+                .nearby
+                .iter()
+                .map(|(ship, name)| (afloat_load(&names, ship), name.clone()))
+                .collect(),
+        })
+        .collect();
+    let answered = save
+        .ledger
+        .answered
+        .iter()
+        .map(|answered| {
+            Ok(Answered {
+                doer: names.ship(&answered.doer)?,
+                victim: names.ship(&answered.victim)?,
+                nation: answered.nation,
+                kind: answered.kind,
+                at: answered.at,
+            })
+        })
+        .collect::<Result<_, LoadError>>()?;
+    *world.resource_mut::<Ledger>() = Ledger {
+        news,
+        next: NewsId(save.ledger.next),
+        losses,
+        answered,
+    };
     Ok(())
 }
 
@@ -681,6 +1410,9 @@ mod tests {
             .sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
         save.officers
             .sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+        save.escorts
+            .sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+        save.wrecks.sort_by(|a, b| a.name.cmp(&b.name));
         save
     }
 
@@ -709,6 +1441,7 @@ mod tests {
             save.ships.iter().any(|ship| ship.voyage.is_some()),
             "a ship should be under way: {save:?}"
         );
+        assert!(!save.ledger.news.is_empty(), "ships have sailed: {save:?}");
 
         let (mut fresh, _) = new_game();
         restore(fresh.world_mut(), &save).unwrap();
@@ -719,7 +1452,7 @@ mod tests {
     }
 
     #[test]
-    fn prizes_battle_damage_standing_relations_officers_and_morale_are_saved() {
+    fn prizes_battle_damage_standing_service_relations_escorts_officers_and_morale_are_saved() {
         let (mut app, player) = game_in_progress();
         // Raiders may have taken some merchants by now: any will do.
         let (prize, prize_name) = app
@@ -734,11 +1467,17 @@ mod tests {
             .remove::<Merchant>()
             .insert((Prize { captor: player }, Timbers(0.4), Rigging(0.7)));
         app.world_mut()
-            .resource_mut::<Standing>()
-            .set(Nation::England, -40.0);
+            .get_mut::<Standing>(player)
+            .unwrap()
+            .set(Nation::ENGLAND, -40.0);
+        let flying_gang = Nation::PIRATES.groups()[0];
+        app.world_mut().get_mut::<Service>(player).unwrap().0 = vec![Post {
+            group: flying_gang,
+            rank: 1,
+        }];
         app.world_mut()
             .resource_mut::<Relations>()
-            .set(Nation::England, Nation::Pirates, -70.0);
+            .set(Nation::ENGLAND, Nation::PIRATES, -70.0);
         app.world_mut().spawn((
             Name::new("Israel Hands"),
             Officer {
@@ -749,11 +1488,37 @@ mod tests {
             Berth::Aboard(player),
         ));
         app.world_mut().get_mut::<Crew>(player).unwrap().morale = 23.0;
+        let (kingston, nassau) = (named(&mut app, "Kingston"), named(&mut app, "Nassau"));
+        app.world_mut().spawn(Escort {
+            ward: prize,
+            nation: Nation::ENGLAND,
+            origin: kingston,
+            destination: nassau,
+            fee: 75,
+            escort: Some(player),
+            lost_at: None,
+        });
         let save = sorted(capture(app.world_mut()));
-        assert!(save.standing.contains(&(Nation::England, -40.0)));
+        assert!(save.escorts.contains(&EscortSave {
+            ward: Some(prize_name.clone()),
+            nation: Nation::ENGLAND,
+            origin: "Kingston".into(),
+            destination: "Nassau".into(),
+            fee: 75,
+            escort: Some("Player Sloop".into()),
+            lost_at: None,
+        }));
+        let jamaica_merchants = Nation::ENGLAND.groups()[2];
+        let record = save
+            .ships
+            .iter()
+            .find_map(|ship| ship.record.as_ref())
+            .expect("the player's record");
+        assert!(record.standing.contains(&(jamaica_merchants, -40.0)));
+        assert_eq!(record.service[0].group, flying_gang);
         assert!(
             save.relations
-                .contains(&([Nation::England, Nation::Pirates], -70.0))
+                .contains(&([Nation::ENGLAND, Nation::PIRATES], -70.0))
         );
         assert!(
             save.ships
@@ -842,6 +1607,7 @@ mod tests {
             payment: 1,
             deadline: 0.0,
             carrier: None,
+            introduction: None,
         });
         assert_eq!(
             restore(app.world_mut(), &save),

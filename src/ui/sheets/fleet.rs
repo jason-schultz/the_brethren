@@ -358,7 +358,7 @@ mod tests {
             prize_hold,
             crew: Crew::new(12),
             prize_crew: Crew::new(2),
-            complement: ShipClass::SLOOP.complement,
+            complement: ShipClass::sloop().complement,
         }
     }
 

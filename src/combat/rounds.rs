@@ -209,6 +209,7 @@ mod tests {
                 guns_per_side,
                 crew: 12,
                 min_crew: 8,
+                stoutness: 1.0,
                 timbers: 1.0,
                 rigging: 1.0,
             },

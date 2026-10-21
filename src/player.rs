@@ -4,20 +4,17 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
-use crate::camera::{CameraRig, cursor_to_ocean};
+use crate::camera::{CameraRig, cursor_to_ocean, near_cursor};
 use crate::combat::gunnery::Broadside;
 use crate::combat::{Battery, EngageOrder, FireControl, FireOrder, Sunk};
 use crate::controls::{Control, ControlUsed, used};
-use crate::navigation::{Arrival, SailOrder};
+use crate::escorts::Escort;
+use crate::navigation::{Arrival, KeepCompany, SailOrder};
 use crate::port::{Docked, Port};
 use crate::prizes::BoardOrder;
 use crate::schedule::FrameSet;
 use crate::ui::Notices;
-
-/// Clicking within this many pixels of a ship engages her, and of a port's
-/// town or anchorage docks there. Measured on screen, so ports are as easy to click on
-/// the chart as close up.
-const CLICK_PIXELS: f32 = 24.0;
+use crate::wrecks::Wreck;
 
 /// Marks the ship the player commands.
 #[derive(Component, Debug)]
@@ -129,9 +126,11 @@ fn order_broadsides(
 }
 
 /// Right-click on the ocean orders the player's ship to sail there. Right-click
-/// near another ship at sea engages her; near a port, sails there to dock.
-/// Left click is reserved for selection. Orders aren't given from the ocean
-/// view while docked; the port screen handles leaving.
+/// near another ship at sea engages her, or keeps company with her if she's
+/// the player's ward; near a port, sails there to dock; near a wreck, lies
+/// over her to salvage. Any other order
+/// ends her company. A left click looks a ship over instead. Orders aren't
+/// given from the ocean view while docked; the port screen handles leaving.
 fn order_sail_on_click(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Single<&Window, With<PrimaryWindow>>,
@@ -139,8 +138,10 @@ fn order_sail_on_click(
     player: Single<Entity, (With<Player>, Without<Docked>, Without<Sunk>)>,
     ships: Query<(Entity, &Name, &Transform, Has<Docked>), (With<Battery>, Without<Player>)>,
     ports: Query<(Entity, &Port, &Transform)>,
+    wrecks: Query<&Transform, With<Wreck>>,
     mut orders: MessageWriter<SailOrder>,
     mut engagements: MessageWriter<EngageOrder>,
+    (wards, mut company): (Query<&Escort>, MessageWriter<KeepCompany>),
     mut notices: ResMut<Notices>,
     time: Res<Time<Real>>,
 ) {
@@ -154,23 +155,29 @@ fn order_sail_on_click(
     let Some(cursor) = window.cursor_position() else {
         return;
     };
-    let near = |point: Vec3| {
-        camera
-            .world_to_viewport(camera_transform, point)
-            .is_ok_and(|screen| screen.distance(cursor) <= CLICK_PIXELS)
-    };
+    let near = |point: Vec3| near_cursor(camera, camera_transform, cursor, point);
     // Ships at sea first: one may be passing the anchorage.
     let mut clicked_ships: Vec<_> = ships
         .iter()
         .filter(|(.., at, _)| near(at.translation))
         .collect();
     clicked_ships.sort_by_key(|&(.., docked)| docked);
+    let ship = *player;
+    let ward = |target| {
+        wards
+            .iter()
+            .any(|escort| escort.ward == target && escort.escort == Some(ship))
+    };
     match clicked_ships.first() {
-        Some(&(target, _, _, false)) => {
-            engagements.write(EngageOrder {
-                ship: *player,
-                target,
+        Some(&(target, _, _, false)) if ward(target) => {
+            company.write(KeepCompany {
+                ship,
+                with: Some(target),
             });
+            return;
+        }
+        Some(&(target, _, _, false)) => {
+            engagements.write(EngageOrder { ship, target });
             return;
         }
         Some(&(_, name, _, true)) => notices.post(
@@ -179,6 +186,7 @@ fn order_sail_on_click(
         ),
         None => {}
     }
+    company.write(KeepCompany { ship, with: None });
     let order = match ports
         .iter()
         .find(|(_, port, anchorage)| near(port.town) || near(anchorage.translation))
@@ -188,9 +196,14 @@ fn order_sail_on_click(
             destination: anchorage.translation,
             on_arrival: Arrival::Dock(port),
         },
+        // Over a wreck, she lies where the divers can go down.
         None => SailOrder {
             ship: *player,
-            destination: clicked,
+            destination: wrecks
+                .iter()
+                .map(|lies| lies.translation)
+                .find(|&lies| near(lies))
+                .unwrap_or(clicked),
             on_arrival: Arrival::HeaveTo,
         },
     };

@@ -6,12 +6,19 @@
 
 use bevy::prelude::*;
 
-use crate::factions::{Nation, Terms};
+use crate::factions::{
+    Colours, DeedKind, Group, GroupKind, Nation, Relations, Serves, Standing, Terms,
+};
+use crate::hunting::{Hunter, Mark, is_quarry};
 use crate::loyalty::Rumour;
 use crate::officers::Role;
+use crate::pardons::Plea;
+use crate::patrols::Patrol;
 use crate::port::{Docked, Refused};
 use crate::sailing::Hull;
 use crate::schedule::SimSet;
+use crate::service::{Post, StruckOff};
+use crate::word::Purpose;
 
 /// Ships within this distance (meters) of each other are in sight: about
 /// the horizon from a masthead, at the map's half scale.
@@ -25,8 +32,8 @@ pub struct Alert {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlertKind {
-    /// Another ship has come in sight.
-    SailSighted { other: Entity },
+    /// Another ship has come in sight, and whether she'd come for this one.
+    SailSighted { other: Entity, hostile: bool },
     /// The ship has run onto land.
     Aground,
     /// Provisions are down to a few days.
@@ -70,6 +77,47 @@ pub enum AlertKind {
         from: Nation,
         to: Nation,
     },
+    /// Her standing has earned her a new rank.
+    Promoted { post: Post },
+    /// She's been struck off every group of a nation she served.
+    StruckOff { nation: Nation, why: StruckOff },
+    /// A governor paid her for an enemy ship, under a letter of marque.
+    Bounty { group: Group, amount: u32 },
+    /// News: a crown has proclaimed an Act of Grace.
+    Grace { nation: Nation },
+    /// A crown has pardoned her.
+    Pardoned { nation: Nation, plea: Plea },
+    /// She ran a group's errand, and it would take her on.
+    Introduced { group: Group },
+    /// News from a group she serves: a ship that concerns it has sailed.
+    Intelligence {
+        ship: Entity,
+        from: Entity,
+        purpose: Purpose,
+        group: Group,
+    },
+    /// The merchant she was escorting came in safe, and paid her `fee`.
+    WardSafe { ward: Entity, fee: u32 },
+    /// The merchant she was escorting came in without her in sight.
+    WardAlone { ward: Entity },
+    /// The merchant she was escorting has been lost or taken.
+    WardLost,
+    /// The merchant she's escorting is under attack.
+    WardAttacked { ward: Entity, by: Entity },
+    /// She's holed, running hard aground or on a reef, and her timbers
+    /// are down to this percent.
+    Holed { timbers: u8, on_reef: bool },
+    /// Her ship was wrecked; she and her men took to the boat. Her wreck,
+    /// if the water's shallow enough.
+    Wrecked { wreck: Option<Entity> },
+    /// Her men are diving on a wreck.
+    Salvaging { wreck: Entity },
+    /// Word of a blow she struck against a nation has reached it.
+    WordOut {
+        nation: Nation,
+        kind: DeedKind,
+        victim: Option<Entity>,
+    },
 }
 
 impl AlertKind {
@@ -89,11 +137,23 @@ impl AlertKind {
                 | Self::Terms { .. }
                 | Self::Restless { .. }
                 | Self::WentOver { .. }
+                | Self::Promoted { .. }
+                | Self::StruckOff { .. }
+                | Self::Bounty { .. }
+                | Self::Grace { .. }
+                | Self::Pardoned { .. }
+                | Self::Introduced { .. }
+                | Self::Intelligence { .. }
+                | Self::WordOut { .. }
+                | Self::Salvaging { .. }
+                | Self::WardSafe { .. }
+                | Self::WardAlone { .. }
+                | Self::WardLost
         )
     }
 
-    /// Whether it drops the game to normal speed. Rumours and news are
-    /// only noted.
+    /// Whether it drops the game to normal speed. Rumours, news, and
+    /// word of her service are only noted.
     pub fn slows_time(self) -> bool {
         !matches!(
             self,
@@ -101,6 +161,14 @@ impl AlertKind {
                 | Self::Terms { .. }
                 | Self::Restless { .. }
                 | Self::WentOver { .. }
+                | Self::Promoted { .. }
+                | Self::StruckOff { .. }
+                | Self::Bounty { .. }
+                | Self::Grace { .. }
+                | Self::Pardoned { .. }
+                | Self::Introduced { .. }
+                | Self::Intelligence { .. }
+                | Self::WordOut { .. }
         )
     }
 }
@@ -124,26 +192,55 @@ impl Plugin for AlertPlugin {
     }
 }
 
-/// Updates who can see whom, and alerts on every ship newly in sight. Every
+/// Updates who can see whom, and alerts on every ship newly in sight,
+/// saying whether she's a hunter that would come for the lookout. Every
 /// pair is checked, which is fine for the handful of ships so far. Ships in
 /// port neither keep a lookout nor count as sails: a harbour full of
 /// merchantmen isn't news.
 fn keep_lookout(
-    mut lookouts: Query<(Entity, &Transform, &mut InSight), Without<Docked>>,
-    ships: Query<(Entity, &Transform), (With<Hull>, Without<Docked>)>,
+    mut lookouts: Query<
+        (
+            Entity,
+            &Transform,
+            &mut InSight,
+            Option<&Colours>,
+            Has<Patrol>,
+            Option<&Standing>,
+        ),
+        Without<Docked>,
+    >,
+    ships: Query<
+        (Entity, &Transform, Option<&Colours>, Option<&Serves>),
+        (With<Hull>, Without<Docked>),
+    >,
+    relations: Res<Relations>,
     mut alerts: MessageWriter<Alert>,
 ) {
-    for (ship, transform, mut in_sight) in &mut lookouts {
+    for (ship, transform, mut in_sight, colours, warship, standing) in &mut lookouts {
         let position = transform.translation;
-        let seen = ships.iter().filter(|&(other, other_transform)| {
+        let mark = Mark {
+            colours: colours.map(|colours| colours.0),
+            warship,
+            attacking: None,
+            standing,
+            salvaging: None,
+        };
+        let seen = ships.iter().filter(|&(other, other_transform, ..)| {
             other != ship && other_transform.translation.distance(position) <= SIGHTING_RANGE
         });
         let mut now = Vec::new();
-        for (other, _) in seen {
+        for (other, _, other_colours, serves) in seen {
             if !in_sight.0.contains(&other) {
+                let hunter = other_colours.and_then(|&Colours(nation)| {
+                    Hunter::of(
+                        nation,
+                        serves.map_or(GroupKind::Merchants, |serves| serves.0),
+                    )
+                });
+                let hostile = hunter.is_some_and(|hunter| is_quarry(hunter, &mark, &relations));
                 alerts.write(Alert {
                     ship,
-                    kind: AlertKind::SailSighted { other },
+                    kind: AlertKind::SailSighted { other, hostile },
                 });
             }
             now.push(other);
@@ -155,6 +252,7 @@ fn keep_lookout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ship_class::ShipClass;
     use crate::test_support::sim_app;
 
     #[test]
@@ -178,12 +276,12 @@ mod tests {
         let mut app = sim_app();
         let lookout = app
             .world_mut()
-            .spawn((Hull::SLOOP, InSight::default()))
+            .spawn((ShipClass::sloop().hull, InSight::default()))
             .id();
         let stranger = app
             .world_mut()
             .spawn((
-                Hull::SLOOP,
+                ShipClass::sloop().hull,
                 Transform::from_xyz(SIGHTING_RANGE * 2.0, 0.0, 0.0),
             ))
             .id();
@@ -200,7 +298,10 @@ mod tests {
             sightings(&app),
             vec![Alert {
                 ship: lookout,
-                kind: AlertKind::SailSighted { other: stranger },
+                kind: AlertKind::SailSighted {
+                    other: stranger,
+                    hostile: false
+                },
             }]
         );
         app.update();
@@ -208,11 +309,49 @@ mod tests {
     }
 
     #[test]
+    fn the_lookout_knows_a_hunter_that_would_come_for_her() {
+        let mut app = sim_app();
+        app.world_mut().spawn((
+            ShipClass::sloop().hull,
+            InSight::default(),
+            Standing::default(),
+            Colours(Nation::ENGLAND),
+        ));
+        let raider = app
+            .world_mut()
+            .spawn((
+                ShipClass::sloop().hull,
+                Colours(Nation::PIRATES),
+                Serves(GroupKind::Navy),
+            ))
+            .id();
+        let merchant = app
+            .world_mut()
+            .spawn((ShipClass::sloop().hull, Colours(Nation::PIRATES)))
+            .id();
+        let mut seen = Vec::new();
+        for _ in 0..2 {
+            app.update();
+            seen.extend(sightings(&app));
+        }
+        let hostile = |other| {
+            seen.iter().find_map(|alert| match alert.kind {
+                AlertKind::SailSighted { other: o, hostile } if o == other => Some(hostile),
+                _ => None,
+            })
+        };
+        assert_eq!(hostile(raider), Some(true));
+        assert_eq!(hostile(merchant), Some(false), "merchantmen hunt no one");
+    }
+
+    #[test]
     fn ships_in_port_are_not_sighted() {
         let mut app = sim_app();
         let port = app.world_mut().spawn_empty().id();
-        app.world_mut().spawn((Hull::SLOOP, InSight::default()));
-        app.world_mut().spawn((Hull::SLOOP, Docked { port }));
+        app.world_mut()
+            .spawn((ShipClass::sloop().hull, InSight::default()));
+        app.world_mut()
+            .spawn((ShipClass::sloop().hull, Docked { port }));
         app.update();
         assert!(sightings(&app).is_empty());
     }

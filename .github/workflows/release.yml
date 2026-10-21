@@ -35,7 +35,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # rustup picks up the pinned toolchain from rust-toolchain.toml.
       - name: Install toolchain
@@ -74,37 +74,37 @@ jobs:
         run: |
           cargo build --release --locked --target aarch64-apple-darwin
           cargo build --release --locked --target x86_64-apple-darwin
-          app="dist/The Brethren.app"
+          app="dist/False Colours.app"
           mkdir -p "$app/Contents/MacOS"
-          lipo -create -output "$app/Contents/MacOS/the_brethren" \
-            target/aarch64-apple-darwin/release/the_brethren \
-            target/x86_64-apple-darwin/release/the_brethren
+          lipo -create -output "$app/Contents/MacOS/false_colours" \
+            target/aarch64-apple-darwin/release/false_colours \
+            target/x86_64-apple-darwin/release/false_colours
           sed "s/VERSION/$VERSION/" packaging/macos/Info.plist > "$app/Contents/Info.plist"
           codesign --force --deep --sign - "$app"
-          ditto -c -k --keepParent "$app" "the-brethren-$LABEL-macos.zip"
-          echo "ARCHIVE=the-brethren-$LABEL-macos.zip" >> "$GITHUB_ENV"
+          ditto -c -k --keepParent "$app" "false-colours-$LABEL-macos.zip"
+          echo "ARCHIVE=false-colours-$LABEL-macos.zip" >> "$GITHUB_ENV"
 
       - name: Build and package (Windows)
         if: matrix.name == 'windows-x86_64'
         run: |
           cargo build --release --locked
           mkdir -p dist
-          cp target/release/the_brethren.exe "dist/The Brethren.exe"
-          archive="the-brethren-$LABEL-windows-x86_64.zip"
-          (cd dist && 7z a "../$archive" "The Brethren.exe")
+          cp target/release/false_colours.exe "dist/False Colours.exe"
+          archive="false-colours-$LABEL-windows-x86_64.zip"
+          (cd dist && 7z a "../$archive" "False Colours.exe")
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
 
       - name: Build and package (Linux)
         if: matrix.name == 'linux-x86_64'
         run: |
           cargo build --release --locked
-          mkdir -p dist/the-brethren
-          cp target/release/the_brethren dist/the-brethren/
-          archive="the-brethren-$LABEL-linux-x86_64.tar.gz"
-          tar -czf "$archive" -C dist the-brethren
+          mkdir -p dist/false-colours
+          cp target/release/false_colours dist/false-colours/
+          archive="false-colours-$LABEL-linux-x86_64.tar.gz"
+          tar -czf "$archive" -C dist false-colours
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: ${{ env.ARCHIVE }}
@@ -118,18 +118,18 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: downloads
           merge-multiple: true
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: downloads/*
           generate_release_notes: true
           body: |
             Download the one for your computer:
 
-            - **macOS** (Apple Silicon and Intel, macOS 11 or later): unzip and move *The Brethren* to Applications. The app isn't signed by Apple yet, so the first time, right-click it and choose **Open**. If macOS says it's damaged, run `xattr -dr com.apple.quarantine "/Applications/The Brethren.app"` in Terminal.
-            - **Windows** (64-bit): unzip and run *The Brethren.exe*. If SmartScreen warns you, choose **More info**, then **Run anyway**.
-            - **Linux** (x86_64): untar and run `the-brethren/the_brethren`. It needs ALSA and udev, which most desktops already have, and Vulkan drivers for your graphics card.
+            - **macOS** (Apple Silicon and Intel, macOS 11 or later): unzip and move *False Colours* to Applications. The app isn't signed by Apple yet, so the first time, right-click it and choose **Open**. If macOS says it's damaged, run `xattr -dr com.apple.quarantine "/Applications/False Colours.app"` in Terminal.
+            - **Windows** (64-bit): unzip and run *False Colours.exe*. If SmartScreen warns you, choose **More info**, then **Run anyway**.
+            - **Linux** (x86_64): untar and run `false-colours/false_colours`. It needs ALSA and udev, which most desktops already have, and Vulkan drivers for your graphics card.

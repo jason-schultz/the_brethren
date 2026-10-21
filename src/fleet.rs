@@ -177,7 +177,7 @@ mod tests {
     fn transfers_need_goods_on_one_side_and_room_on_the_other() {
         let goods = Goods::standard();
         let rum = goods.id("rum").unwrap();
-        let complement = ShipClass::SLOOP.complement;
+        let complement = ShipClass::sloop().complement;
         let mut laden = Hold::new(40.0);
         laden.owned.add(rum, 35.0);
         let mut empty = Hold::new(40.0);

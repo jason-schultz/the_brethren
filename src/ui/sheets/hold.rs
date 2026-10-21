@@ -7,10 +7,12 @@ use crate::cargo::{Hold, Lading};
 use crate::clock::GameDate;
 use crate::controls::{Bindings, Sheet};
 use crate::economy::jobs::{Carrier, Job};
-use crate::goods::{Carriage, Goods};
+use crate::escorts::Escort;
+use crate::goods::Goods;
 use crate::player::Player;
 use crate::schedule::FrameSet;
 use crate::ui::panel::{Panel, Row, Shown, Style, show};
+use crate::ui::unit;
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
@@ -24,13 +26,13 @@ fn lines(goods: &Goods, lading: &Lading) -> Vec<Row<SheetAction>> {
     lading
         .iter()
         .map(|(good, quantity)| {
-            let unit = match goods.carriage(good) {
-                Carriage::Hold => " t",
-                Carriage::Berths => "",
-            };
             Row::text(
                 Style::Body,
-                format!("{}: {quantity:.0}{unit}", goods.get(good).name),
+                format!(
+                    "{}: {quantity:.0}{}",
+                    goods.get(good).name,
+                    unit(goods, good)
+                ),
             )
         })
         .collect()
@@ -39,7 +41,16 @@ fn lines(goods: &Goods, lading: &Lading) -> Vec<Row<SheetAction>> {
 /// A contract carried, with the name of the port it's bound for.
 type Contract<'a> = (&'a Job, &'a str);
 
-fn build(goods: &Goods, hold: &Hold, contracts: &[Contract], hint: String) -> Panel<SheetAction> {
+/// An escort taken on: the ward's name, where she's bound, and the fee.
+type Ward<'a> = (&'a str, &'a str, u32);
+
+fn build(
+    goods: &Goods,
+    hold: &Hold,
+    contracts: &[Contract],
+    wards: &[Ward],
+    hint: String,
+) -> Panel<SheetAction> {
     let mut rows = vec![Row::text(
         Style::Body,
         format!(
@@ -55,7 +66,7 @@ fn build(goods: &Goods, hold: &Hold, contracts: &[Contract], hint: String) -> Pa
     }
     rows.extend(own);
     rows.push(Row::text(Style::Heading, "Under contract"));
-    if contracts.is_empty() {
+    if contracts.is_empty() && wards.is_empty() {
         rows.push(Row::text(
             Style::Faded,
             "No contracts. Ports in need post them at the governor's house,",
@@ -78,6 +89,12 @@ fn build(goods: &Goods, hold: &Hold, contracts: &[Contract], hint: String) -> Pa
             ),
         ));
     }
+    for (ward, destination, fee) in wards {
+        rows.push(Row::text(
+            Style::Body,
+            format!("Escorting the {ward} to {destination}, for {fee} pieces of eight"),
+        ));
+    }
     rows.push(close_row());
     Panel::new("Hold", hint, rows)
 }
@@ -85,6 +102,7 @@ fn build(goods: &Goods, hold: &Hold, contracts: &[Contract], hint: String) -> Pa
 fn refresh(
     player: Single<(Entity, &Hold), With<Player>>,
     jobs: Query<(&Job, &Carrier)>,
+    escorts: Query<&Escort>,
     names: Query<&Name>,
     goods: Res<Goods>,
     bindings: Res<Bindings>,
@@ -97,10 +115,17 @@ fn refresh(
         .filter(|(_, carrier)| carrier.0 == ship)
         .map(|(job, _)| (job, names.get(job.destination).map_or("?", Name::as_str)))
         .collect();
+    let name = |entity| names.get(entity).map_or("?", Name::as_str);
+    let wards: Vec<Ward> = escorts
+        .iter()
+        .filter(|escort| escort.escort == Some(ship))
+        .map(|escort| (name(escort.ward), name(escort.destination), escort.fee))
+        .collect();
     let content = build(
         &goods,
         hold,
         &contracts,
+        &wards,
         closing_hint(&bindings, Sheet::Hold),
     );
     let (entity, mut shown) = panel.into_inner();

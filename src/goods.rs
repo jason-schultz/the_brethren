@@ -90,6 +90,11 @@ impl Goods {
     pub fn carriage(&self, id: GoodId) -> Carriage {
         self.get(id).carriage
     }
+
+    /// Every good, in the data's order.
+    pub fn ids(&self) -> impl Iterator<Item = GoodId> + use<> {
+        (0..self.goods.len()).map(GoodId)
+    }
 }
 
 pub struct GoodsPlugin;

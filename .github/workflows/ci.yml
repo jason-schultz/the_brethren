@@ -1,0 +1,44 @@
+# Checks every push and pull request: formatting, lints, and the tests.
+#
+# The simulation runs headless, so the tests need no display or GPU.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Format, lint, and test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      # rustup picks up the pinned toolchain from rust-toolchain.toml.
+      - name: Install toolchain
+        run: rustup toolchain install
+
+      - name: Install Linux libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      # Lint with and without the full chronicle, which only some builds have.
+      - name: Lint
+        run: |
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo clippy --workspace --all-targets --features chronicle --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --features chronicle --locked

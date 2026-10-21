@@ -9,7 +9,7 @@ use std::fmt::Write;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button, observe};
 
-use super::{Notices, button_style};
+use super::{Notices, button_style, calling, compass_point, purpose_text};
 use crate::alert::{Alert, AlertKind};
 use crate::cargo::{Hold, Purse};
 use crate::clock::WorldClock;
@@ -18,13 +18,16 @@ use crate::combat::tactics::BOARDING_RANGE;
 use crate::combat::{Battery, Engaged, Struck, Timbers};
 use crate::controls::{ACTION_BAR, Bindings, Control, ControlUsed, MENU, key_name};
 use crate::crew::{Crew, days_of_provisions};
-use crate::factions::{NATIONS, Standing, Terms};
+use crate::factions::{Colours, DeedKind, GroupKind, Serves, Standing, Terms, nations};
 use crate::goods::Goods;
 use crate::loyalty::Rumour;
-use crate::math::{MPS_TO_KNOTS, normalize_heading};
+use crate::math::MPS_TO_KNOTS;
+use crate::pardons::{GRACE_DAYS, Plea, under_grace};
 use crate::player::{BattleStyle, Player};
 use crate::port::Refused;
 use crate::sailing::{Heading, Rigging, Speed};
+use crate::service::StruckOff;
+use crate::ship_class::ShipClass;
 use crate::time_control::LatestAlert;
 use crate::time_scale::{SPEEDS, TimeScale};
 use crate::visuals::influence::ShowInfluence;
@@ -33,8 +36,8 @@ use crate::wind::Wind;
 
 /// Over the world and the port screen, so the HUD stays usable in port.
 const HUD_LAYER: i32 = 2;
-const BAR: Color = Color::srgba(0.05, 0.04, 0.03, 0.72);
-const TEXT: Color = Color::srgb(0.93, 0.9, 0.82);
+pub(super) const BAR: Color = Color::srgba(0.05, 0.04, 0.03, 0.72);
+pub(super) const TEXT: Color = Color::srgb(0.93, 0.9, 0.82);
 /// The current speed's button label, keys on buttons, and warnings.
 const GOLD: Color = Color::srgb(1.0, 0.82, 0.35);
 const WARNING: Color = Color::srgb(1.0, 0.45, 0.35);
@@ -252,26 +255,28 @@ fn spawn_hud(mut commands: Commands) {
         )],
     ));
     // The influence overlay's legend, over the bottom left corner.
-    let entries = NATIONS.map(|nation| {
-        (
-            Node {
-                column_gap: px(6),
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            children![
-                (
-                    Node {
-                        width: px(12),
-                        height: px(12),
-                        ..default()
-                    },
-                    BackgroundColor(nation_colour(nation)),
-                ),
-                label(nation.to_string(), 14.0, TEXT),
-            ],
-        )
-    });
+    let entries: Vec<_> = nations()
+        .map(|nation| {
+            (
+                Node {
+                    column_gap: px(6),
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                children![
+                    (
+                        Node {
+                            width: px(12),
+                            height: px(12),
+                            ..default()
+                        },
+                        BackgroundColor(nation_colour(nation)),
+                    ),
+                    label(nation.to_string(), 14.0, TEXT),
+                ],
+            )
+        })
+        .collect();
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
@@ -327,28 +332,16 @@ fn show_legend(show: Res<ShowInfluence>, mut legend: Single<&mut Node, With<Lege
     legend.display = if show.0 { Display::Flex } else { Display::None };
 }
 
-/// The 16-point compass name for a heading.
-fn compass_point(heading: f32) -> &'static str {
-    const POINTS: [&str; 16] = [
-        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW",
-        "NW", "NNW",
-    ];
-    let sector = std::f32::consts::TAU / POINTS.len() as f32;
-    let index = (normalize_heading(heading) / sector).round() as usize % POINTS.len();
-    POINTS[index]
-}
-
 fn update_status(
-    player: Single<(&Heading, &Speed, &Purse, &Crew, &Hold), With<Player>>,
+    player: Single<(&Heading, &Speed, &Purse, &Crew, &Hold, &Standing), With<Player>>,
     clock: Res<WorldClock>,
     wind: Res<Wind>,
     goods: Res<Goods>,
-    standing: Res<Standing>,
     time: Res<Time<Virtual>>,
     mut status: Single<&mut Text, (With<StatusText>, Without<WarningText>)>,
     mut warning: Single<&mut Text, (With<WarningText>, Without<StatusText>)>,
 ) {
-    let (heading, speed, purse, crew, hold) = *player;
+    let (heading, speed, purse, crew, hold, standing) = *player;
     let people = crew.count as f64 + hold.passengers(&goods);
     let days = days_of_provisions(hold.owned.get(goods.provisions), people).min(999.0);
     let text = format!(
@@ -370,8 +363,10 @@ fn update_status(
     if time.is_paused() {
         warnings.push("PAUSED".to_string());
     }
-    for nation in NATIONS {
-        if standing.wanted_by(nation) {
+    for nation in nations() {
+        if under_grace(standing, nation, clock.elapsed) {
+            warnings.push(format!("WANTED by {nation}, but under its Act of Grace"));
+        } else if standing.wanted_by(nation) {
             warnings.push(format!("WANTED by {nation}"));
         }
     }
@@ -418,21 +413,32 @@ fn update_labels(
 }
 
 /// Notes the player's passing alerts. Those that stop the clock are pinned
-/// instead, until she resumes.
+/// instead, until she resumes. A ship sighted is named with what she is.
 fn note_alerts(
     mut alerts: MessageReader<Alert>,
     player: Single<Entity, With<Player>>,
     names: Query<&Name>,
+    ships: Query<(&ShipClass, Option<&Colours>, Option<&Serves>)>,
+    goods: Res<Goods>,
     real: Res<Time<Real>>,
     mut notices: ResMut<Notices>,
 ) {
     for alert in alerts.read() {
-        if alert.ship == *player && !alert.kind.needs_decision() {
-            notices.post(
-                describe(*alert, |entity| name_of(&names, entity)),
-                real.elapsed_secs(),
-            );
+        if alert.ship != *player || alert.kind.needs_decision() {
+            continue;
         }
+        let sighting = matches!(alert.kind, AlertKind::SailSighted { .. });
+        let name = |entity| {
+            let name = name_of(&names, entity);
+            match ships.get(entity) {
+                Ok((class, colours, serves)) if sighting => {
+                    let serves = serves.map_or(GroupKind::Merchants, |serves| serves.0);
+                    format!("{name}, {},", calling(class, colours.map(|c| c.0), serves))
+                }
+                _ => name,
+            }
+        };
+        notices.post(describe(*alert, &goods, name), real.elapsed_secs());
     }
 }
 
@@ -445,20 +451,21 @@ fn update_messages(
     latest: Res<LatestAlert>,
     real: Res<Time<Real>>,
     names: Query<&Name>,
+    goods: Res<Goods>,
     mut pinned: Single<(&mut Text, &mut Node), (With<PinnedText>, Without<NoticesText>)>,
     mut log: Single<(&mut Text, &mut Node), (With<NoticesText>, Without<PinnedText>)>,
 ) {
     let call = latest
         .0
         .filter(|alert| alert.kind.needs_decision())
-        .map(|alert| describe(alert, |entity| name_of(&names, entity)));
+        .map(|alert| describe(alert, &goods, |entity| name_of(&names, entity)));
     show_text(&mut pinned, call.unwrap_or_default());
     let lines: Vec<&str> = notices.current(real.elapsed_secs()).collect();
     show_text(&mut log, lines.join("\n"));
 }
 
 /// Shows `text` in a boxed text node, hiding the box when there's none.
-fn show_text((text, node): &mut (Mut<Text>, Mut<Node>), content: String) {
+pub(super) fn show_text((text, node): &mut (Mut<Text>, Mut<Node>), content: String) {
     let display = if content.is_empty() {
         Display::None
     } else {
@@ -538,11 +545,15 @@ fn battle_text(
     text
 }
 
-/// What the lookout or the bosun calls out for an alert. `name` names a ship
-/// or an officer.
-pub(super) fn describe(alert: Alert, name: impl Fn(Entity) -> String) -> String {
+/// What the lookout or the bosun calls out for an alert. `name` names a
+/// ship, a port, or an officer.
+pub(super) fn describe(alert: Alert, goods: &Goods, name: impl Fn(Entity) -> String) -> String {
     match alert.kind {
-        AlertKind::SailSighted { other } => format!("Sail ho! {} in sight.", name(other)),
+        AlertKind::SailSighted { other, hostile } => format!(
+            "Sail ho! {} in sight.{}",
+            name(other),
+            if hostile { " She'll come for us!" } else { "" }
+        ),
         AlertKind::Aground => "We've run aground!".to_string(),
         AlertKind::ProvisionsLow => "Provisions are running low.".to_string(),
         AlertKind::DeadlineNear { .. } => "A contract falls due within a day.".to_string(),
@@ -623,6 +634,107 @@ pub(super) fn describe(alert: Alert, name: impl Fn(Entity) -> String) -> String 
         AlertKind::WentOver { port, from, to } => {
             format!("News: {} has gone over from {from} to {to}!", name(port))
         }
+        AlertKind::Promoted { post } => format!(
+            "Word from {}: you're made {}, with {}.",
+            post.group,
+            post.title(),
+            post.perk()
+        ),
+        AlertKind::StruckOff { nation, why } => match why {
+            StruckOff::TurnedOnThem => {
+                format!(
+                    "You've struck at {nation}'s own, and every one of its groups has struck you off."
+                )
+            }
+            StruckOff::Wanted => format!("{nation} wants you, and its groups have struck you off."),
+            StruckOff::Deserted => format!(
+                "You've hoisted other colours: the navy has struck you off for a deserter. {nation}'s other groups keep you."
+            ),
+        },
+        AlertKind::Bounty { group, amount } => {
+            format!(
+                "{amount} pieces of eight from {group} for that one, under our letter of marque."
+            )
+        }
+        AlertKind::Grace { nation } => format!(
+            "News: {nation} proclaims an Act of Grace! For {GRACE_DAYS:.0} days, any captain it wants may come into its ports with a governor to be pardoned."
+        ),
+        AlertKind::Pardoned { nation, plea } => match plea {
+            Plea::Grace => {
+                format!("We've come in under the Act of Grace: {nation} has pardoned us.")
+            }
+            Plea::Petition => format!("The lawyer has done his work: {nation} has pardoned us."),
+        },
+        AlertKind::Introduced { group } => format!(
+            "Word from {group}: they know us now, and would take us on. Join them at their office in one of {}'s ports.",
+            group.nation
+        ),
+        AlertKind::Intelligence {
+            ship,
+            from,
+            purpose,
+            group,
+        } => {
+            let bound_for = purpose.bound_for().map(&name).unwrap_or_default();
+            format!(
+                "Word from {group}: {} has sailed from {} {}.",
+                name(ship),
+                name(from),
+                purpose_text(goods, purpose, &bound_for)
+            )
+        }
+        AlertKind::WardSafe { ward, fee } => format!(
+            "{} is safe in port: {fee} pieces of eight for seeing her in.",
+            name(ward)
+        ),
+        AlertKind::WardAlone { ward } => format!(
+            "{} came in with no sight of us, and her merchants won't pay for that escort.",
+            name(ward)
+        ),
+        AlertKind::WardAttacked { ward, by } => format!(
+            "{} is under attack by {}! Right-click the attacker to engage her.",
+            name(ward),
+            name(by)
+        ),
+        AlertKind::Holed { timbers, on_reef } => format!(
+            "{} We're holed: timbers at {timbers}%.",
+            if on_reef {
+                "We've struck a reef!"
+            } else {
+                "We've struck hard!"
+            }
+        ),
+        AlertKind::Wrecked { wreck } => format!(
+            "She's breaking up! We've taken to the boat with the men.{}",
+            wreck.map_or(String::new(), |wreck| format!(
+                " Her wreck lies in shallow water: {}.",
+                name(wreck)
+            ))
+        ),
+        AlertKind::Salvaging { wreck } => format!(
+            "Our divers are down on the {}. Lie hove to here and they'll bring up what they can.",
+            name(wreck)
+        ),
+        AlertKind::WordOut {
+            nation,
+            kind,
+            victim,
+        } => {
+            let ship = victim.map_or("a ship".to_string(), &name);
+            let what = match kind {
+                DeedKind::Attacked => format!("we attacked {ship}"),
+                DeedKind::Captured => format!("we took {ship}"),
+                DeedKind::Sank => format!("we sank {ship}"),
+                DeedKind::RaisedPort => "we lay in port as the town rose".to_string(),
+                DeedKind::FalseReport => format!("our account of {ship} was false"),
+                _ => "of what we did".to_string(),
+            };
+            format!("Word that {what} has reached {nation}.")
+        }
+        AlertKind::WardLost => {
+            "We've lost the ship we were escorting. Her merchants will want an account of it in port."
+                .to_string()
+        }
     }
 }
 
@@ -636,12 +748,31 @@ mod tests {
         let ship = Entity::PLACEHOLDER;
         let alert = |kind| Alert { ship, kind };
         let name = |_| "the Ranger".to_string();
+        let goods = Goods::standard();
         assert_eq!(
-            describe(alert(AlertKind::SailSighted { other: ship }), name),
+            describe(
+                alert(AlertKind::SailSighted {
+                    other: ship,
+                    hostile: false
+                }),
+                &goods,
+                name
+            ),
             "Sail ho! the Ranger in sight."
         );
         assert_eq!(
-            describe(alert(AlertKind::Aground), name),
+            describe(
+                alert(AlertKind::SailSighted {
+                    other: ship,
+                    hostile: true
+                }),
+                &goods,
+                name
+            ),
+            "Sail ho! the Ranger in sight. She'll come for us!"
+        );
+        assert_eq!(
+            describe(alert(AlertKind::Aground), &goods, name),
             "We've run aground!"
         );
         assert!(
@@ -649,22 +780,10 @@ mod tests {
                 alert(AlertKind::Mutiny {
                     leader: Some(Role::FirstMate)
                 }),
+                &goods,
                 name
             )
             .starts_with("Mutiny! Our First Mate has taken the ship")
         );
-    }
-
-    #[test]
-    fn compass_points_match_headings() {
-        assert_eq!(compass_point(0.0), "N");
-        assert_eq!(compass_point(67.5_f32.to_radians()), "ENE");
-        assert_eq!(compass_point(180_f32.to_radians()), "S");
-        assert_eq!(
-            compass_point(355_f32.to_radians()),
-            "N",
-            "wraps back to north"
-        );
-        assert_eq!(compass_point(-90_f32.to_radians()), "W");
     }
 }

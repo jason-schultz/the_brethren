@@ -160,7 +160,10 @@ mod tests {
         let other = app.world_mut().spawn_empty().id();
         app.world_mut().write_message(Alert {
             ship: player,
-            kind: AlertKind::SailSighted { other },
+            kind: AlertKind::SailSighted {
+                other,
+                hostile: false,
+            },
         });
         app.update();
         assert_eq!(speed(&app), SPEEDS[0]);

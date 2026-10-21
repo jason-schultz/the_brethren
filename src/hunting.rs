@@ -1,8 +1,8 @@
 //! Hunting: which ships a navy or a pirate goes after, and the chase.
 //!
 //! A navy hunts the ships of nations it's at war with, a captain her
-//! nation wants, and anyone it sees attacking its own or an ally's
-//! shipping. A raider preys on any ship but a warship whose colours are
+//! nation wants, anyone it sees attacking its own or an ally's shipping,
+//! and anyone diving on its nation's wrecks. A raider preys on any ship but a warship whose colours are
 //! hostile to hers. Either one gives chase to the nearest quarry in sight,
 //! and engages her at close range.
 
@@ -12,10 +12,10 @@ use bevy::prelude::*;
 
 use crate::alert::SIGHTING_RANGE;
 use crate::combat::{DISENGAGE_DISTANCE, Engaged, Struck, Sunk};
-use crate::factions::{Colours, Nation, Relations, Standing, Terms};
+use crate::factions::{Colours, GroupKind, Nation, Relations, Standing, Terms};
 use crate::patrols::Patrol;
-use crate::player::Player;
 use crate::port::Docked;
+use crate::wrecks::{SALVAGE_RANGE, Wreck};
 
 /// A hunter engages her quarry within this range, meters: well inside the
 /// range at which battles break off, so a chase doesn't flicker in and out
@@ -34,24 +34,42 @@ pub enum Hunter {
     Raider(Nation),
 }
 
+impl Hunter {
+    /// The hunter a ship under `nation`'s colours, sailing for `serves`,
+    /// is, if any: a crown's warships are its navy, the Brethren's are
+    /// raiders, and merchantmen hunt no one.
+    pub fn of(nation: Nation, serves: GroupKind) -> Option<Self> {
+        match serves {
+            GroupKind::Navy if nation.is_crown() => Some(Self::Navy(nation)),
+            GroupKind::Navy => Some(Self::Raider(nation)),
+            GroupKind::Governor | GroupKind::Merchants => None,
+        }
+    }
+}
+
 /// What a hunter can tell of a ship in sight.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Mark {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Mark<'a> {
     pub colours: Option<Nation>,
     pub warship: bool,
     /// The colours of the ship she's attacking, if she started a fight.
     pub attacking: Option<Nation>,
-    /// Whether she's the player, and so has standing to be wanted for.
-    pub player: bool,
+    /// Her captain's name with the nations, if she has one to be wanted
+    /// for.
+    pub standing: Option<&'a Standing>,
+    /// The nation whose wreck she's diving on, if she is.
+    pub salvaging: Option<Nation>,
 }
 
 /// Whether `hunter` goes after a ship marked `mark`.
-pub fn is_quarry(hunter: Hunter, mark: &Mark, relations: &Relations, standing: &Standing) -> bool {
+pub fn is_quarry(hunter: Hunter, mark: &Mark, relations: &Relations) -> bool {
     let (Hunter::Navy(nation) | Hunter::Raider(nation)) = hunter;
-    if mark.colours == Some(nation) && !mark.player {
+    let wanted = mark
+        .standing
+        .is_some_and(|standing| standing.wanted_by(nation));
+    if mark.colours == Some(nation) && !wanted {
         return false;
     }
-    let wanted = mark.player && standing.wanted_by(nation);
     let terms = mark.colours.map(|colours| relations.terms(nation, colours));
     match hunter {
         Hunter::Navy(_) => {
@@ -59,7 +77,8 @@ pub fn is_quarry(hunter: Hunter, mark: &Mark, relations: &Relations, standing: &
             let defending = mark
                 .attacking
                 .is_some_and(|victim| relations.terms(nation, victim) == Terms::Alliance);
-            wanted || terms == Some(Terms::War) || defending
+            let robbing = mark.salvaging == Some(nation);
+            wanted || terms == Some(Terms::War) || defending || robbing
         }
         Hunter::Raider(_) => {
             wanted || (!mark.warship && terms.is_some_and(|terms| terms <= Terms::Hostile))
@@ -101,13 +120,13 @@ pub struct Sea<'w, 's> {
             Option<&'static Colours>,
             Has<Patrol>,
             Option<&'static Engaged>,
-            Has<Player>,
+            Option<&'static Standing>,
         ),
         (Without<Docked>, Without<Struck>, Without<Sunk>),
     >,
     colours: Query<'w, 's, &'static Colours>,
+    wrecks: Query<'w, 's, (&'static Transform, &'static Wreck)>,
     relations: Res<'w, Relations>,
-    standing: Res<'w, Standing>,
 }
 
 impl Sea<'_, '_> {
@@ -117,18 +136,26 @@ impl Sea<'_, '_> {
         self.ships
             .iter()
             .filter(|(_, transform, ..)| transform.translation.distance(at) <= SIGHTING_RANGE)
-            .filter(|&(_, _, colours, warship, engaged, player)| {
+            .filter(|&(_, transform, colours, warship, engaged, standing)| {
                 let attacking = engaged
                     .filter(|engaged| engaged.aggressor)
                     .and_then(|engaged| self.colours.get(engaged.enemy).ok())
                     .map(|colours| colours.0);
+                let salvaging = self
+                    .wrecks
+                    .iter()
+                    .find(|(lies, _)| {
+                        lies.translation.distance(transform.translation) <= SALVAGE_RANGE
+                    })
+                    .and_then(|(_, wreck)| wreck.nation);
                 let mark = Mark {
                     colours: colours.map(|colours| colours.0),
                     warship,
                     attacking,
-                    player,
+                    standing,
+                    salvaging,
                 };
-                is_quarry(hunter, &mark, &self.relations, &self.standing)
+                is_quarry(hunter, &mark, &self.relations)
             })
             .map(|(entity, transform, ..)| (entity, transform.translation))
             .min_by_key(|(_, position)| FloatOrd(position.distance(at)))
@@ -139,70 +166,61 @@ impl Sea<'_, '_> {
 mod tests {
     use super::*;
 
-    fn mark(colours: Nation) -> Mark {
+    fn mark(colours: Nation) -> Mark<'static> {
         Mark {
             colours: Some(colours),
             warship: false,
             attacking: None,
-            player: false,
+            standing: None,
+            salvaging: None,
         }
     }
 
     #[test]
     fn navies_hunt_their_enemies_and_whoever_attacks_their_shipping() {
-        let (relations, standing) = (Relations::default(), Standing::default());
-        let spain = Hunter::Navy(Nation::Spain);
-        let england = Hunter::Navy(Nation::England);
-        assert!(is_quarry(
-            spain,
-            &mark(Nation::Pirates),
-            &relations,
-            &standing
-        ));
+        let relations = Relations::default();
+        let spain = Hunter::Navy(Nation::SPAIN);
+        let england = Hunter::Navy(Nation::ENGLAND);
+        assert!(is_quarry(spain, &mark(Nation::PIRATES), &relations));
         assert!(
-            !is_quarry(england, &mark(Nation::Pirates), &relations, &standing),
+            !is_quarry(england, &mark(Nation::PIRATES), &relations),
             "England isn't at war with them yet"
         );
         let raiding = Mark {
-            attacking: Some(Nation::England),
-            ..mark(Nation::Pirates)
+            attacking: Some(Nation::ENGLAND),
+            ..mark(Nation::PIRATES)
         };
-        assert!(is_quarry(england, &raiding, &relations, &standing));
-        assert!(!is_quarry(
-            spain,
-            &mark(Nation::Spain),
-            &relations,
-            &standing
-        ));
+        assert!(is_quarry(england, &raiding, &relations));
+        assert!(!is_quarry(spain, &mark(Nation::SPAIN), &relations));
     }
 
     #[test]
     fn raiders_prey_on_hostile_shipping_but_not_warships_or_friends() {
-        let (mut relations, standing) = (Relations::default(), Standing::default());
-        let raider = Hunter::Raider(Nation::Pirates);
-        assert!(is_quarry(
-            raider,
-            &mark(Nation::England),
-            &relations,
-            &standing
-        ));
+        let mut relations = Relations::default();
+        let raider = Hunter::Raider(Nation::PIRATES);
+        assert!(is_quarry(raider, &mark(Nation::ENGLAND), &relations));
         let warship = Mark {
             warship: true,
-            ..mark(Nation::England)
+            ..mark(Nation::ENGLAND)
         };
-        assert!(!is_quarry(raider, &warship, &relations, &standing));
-        relations.set(Nation::England, Nation::Pirates, 0.0);
+        assert!(!is_quarry(raider, &warship, &relations));
+        relations.set(Nation::ENGLAND, Nation::PIRATES, 0.0);
+        assert!(!is_quarry(raider, &mark(Nation::ENGLAND), &relations));
+        assert!(!is_quarry(raider, &mark(Nation::PIRATES), &relations));
+    }
+
+    #[test]
+    fn a_navy_hunts_whoever_dives_on_its_wrecks() {
+        let relations = Relations::default();
+        let diver = Mark {
+            salvaging: Some(Nation::SPAIN),
+            ..mark(Nation::ENGLAND)
+        };
+        assert!(is_quarry(Hunter::Navy(Nation::SPAIN), &diver, &relations));
         assert!(!is_quarry(
-            raider,
-            &mark(Nation::England),
-            &relations,
-            &standing
-        ));
-        assert!(!is_quarry(
-            raider,
-            &mark(Nation::Pirates),
-            &relations,
-            &standing
+            Hunter::Navy(Nation::SPAIN),
+            &mark(Nation::ENGLAND),
+            &relations
         ));
     }
 
@@ -210,17 +228,36 @@ mod tests {
     fn a_wanted_captain_is_hunted_under_any_colours() {
         let relations = Relations::default();
         let mut standing = Standing::default();
-        standing.set(Nation::England, -50.0);
-        let player = Mark {
-            player: true,
-            ..mark(Nation::England)
+        standing.set(Nation::ENGLAND, -50.0);
+        let captain = Mark {
+            standing: Some(&standing),
+            ..mark(Nation::ENGLAND)
         };
         assert!(is_quarry(
-            Hunter::Navy(Nation::England),
-            &player,
-            &relations,
-            &standing
+            Hunter::Navy(Nation::ENGLAND),
+            &captain,
+            &relations
         ));
+        let unknown = mark(Nation::ENGLAND);
+        assert!(!is_quarry(
+            Hunter::Navy(Nation::ENGLAND),
+            &unknown,
+            &relations
+        ));
+    }
+
+    #[test]
+    fn warships_hunt_and_merchantmen_dont() {
+        use GroupKind::*;
+        assert_eq!(
+            Hunter::of(Nation::ENGLAND, Navy),
+            Some(Hunter::Navy(Nation::ENGLAND))
+        );
+        assert_eq!(
+            Hunter::of(Nation::PIRATES, Navy),
+            Some(Hunter::Raider(Nation::PIRATES))
+        );
+        assert_eq!(Hunter::of(Nation::SPAIN, Merchants), None);
     }
 
     #[test]

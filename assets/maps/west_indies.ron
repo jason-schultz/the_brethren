@@ -272,7 +272,7 @@
     ports: [
         (
             name: "Port Royal",
-            flag: England,
+            flag: "england",
             town: (17.9378, -76.8405),
             // The anchorage inside the harbour, off the town's north shore.
             anchorage: (17.9435, -76.8405),
@@ -292,7 +292,7 @@
         ),
         (
             name: "Kingston",
-            flag: England,
+            flag: "england",
             town: (17.9720, -76.7950),
             anchorage: (17.9600, -76.7950),
             locations: [Tavern, Market, Shipyard, MerchantsExchange],
@@ -321,7 +321,7 @@
         ),
         (
             name: "Nassau",
-            flag: Pirates,
+            flag: "pirates",
             town: (25.0740, -77.3430),
             // Inside Hog Island, the harbour's natural breakwater.
             anchorage: (25.0815, -77.3350),
@@ -340,7 +340,7 @@
         ),
         (
             name: "Santiago de Cuba",
-            flag: Spain,
+            flag: "spain",
             town: (20.0050, -75.8300),
             // Off the mouth of the bay, below El Morro.
             anchorage: (19.9550, -75.8400),

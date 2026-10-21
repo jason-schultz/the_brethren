@@ -30,6 +30,8 @@ pub enum Refusal {
     NotHere,
     /// She already has an officer in that post.
     PostFilled,
+    /// Another captain has already taken it.
+    Taken,
 }
 
 impl fmt::Display for Refusal {
@@ -42,6 +44,7 @@ impl fmt::Display for Refusal {
             Self::NotEnough => "not enough aboard",
             Self::NotHere => "not at this port",
             Self::PostFilled => "the post is filled",
+            Self::Taken => "already taken",
         })
     }
 }

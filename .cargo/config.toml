@@ -1,0 +1,7 @@
+# Shorthands for the dev tools.
+[alias]
+# The world running on its own, headless: `cargo soak --days 200`.
+soak = "run --release --features chronicle --bin soak --"
+# Serves the logs of runs as web pages: `cargo logbook`. (`cargo report`
+# is cargo's own.)
+logbook = "run --release -p report --"

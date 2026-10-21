@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>The Brethren</string>
+	<string>False Colours</string>
 	<key>CFBundleDisplayName</key>
-	<string>The Brethren</string>
+	<string>False Colours</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.thebrethren.game</string>
+	<string>com.falsecolours.game</string>
 	<key>CFBundleExecutable</key>
-	<string>the_brethren</string>
+	<string>false_colours</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleVersion</key>

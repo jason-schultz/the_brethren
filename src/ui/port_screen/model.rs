@@ -7,13 +7,23 @@ use bevy::prelude::*;
 use crate::allegiance::Favour;
 use crate::clock::GameDate;
 use crate::crew::shore_leave_cost;
-use crate::economy::jobs::{Job, check_acceptance, job_office, shortfall};
-use crate::economy::market::{Dealing, Market, Side, Trader, asking_price, bid_price, quote};
-use crate::goods::{Carriage, GoodId, Goods};
+use crate::economy::Refusal;
+use crate::economy::jobs::{Job, check_acceptance, shortfall};
+use crate::economy::market::{
+    Dealing, Market, MarketEntry, Side, Trader, asking_price, bid_price, quote,
+};
+use crate::escorts::{Escort, check_escort};
+use crate::factions::{Group, GroupKind, Nation, Standing, nations};
+use crate::goods::{GoodId, Goods};
+use crate::math::MPS_TO_KNOTS;
 use crate::officers::{Berth, Officer, OfficerAct, Quarterdeck, check_order};
-use crate::port::{Location, Port};
+use crate::pardons::{NoPetition, check_petition};
+use crate::port::{Location, Port, office};
+use crate::service::{Service, check_join};
+use crate::ship_class::ShipClass;
 use crate::ui::panel::{self, Style};
-use crate::ui::{mood_line, ship_status_line};
+use crate::ui::{amount, location_name, mood_line, ship_status_line, unit};
+use crate::word::Fate;
 
 /// Batch sizes offered for buying and selling.
 const LOTS: [u32; 2] = [1, 10];
@@ -39,13 +49,26 @@ pub(super) enum Action {
         side: Side,
     },
     Accept(Entity),
+    /// Take on this escort.
+    AcceptEscort(Entity),
     CastOff,
     Repair,
     SellPrize(Entity),
     TakeCommand(Entity),
+    /// Exchange her ship for a new one of this class.
+    BuyShip(ShipClass),
     ShoreLeave,
     /// Hire this officer.
     Hire(Entity),
+    /// Join this group.
+    Join(Group),
+    /// Pay a lawyer to petition this nation for a pardon.
+    Petition(Nation),
+    /// Say this is how the ship `lost` was lost.
+    GiveAccount {
+        lost: Entity,
+        says: Fate,
+    },
 }
 
 type Row = panel::Row<Action>;
@@ -60,6 +83,19 @@ pub(super) struct Listing<'a> {
     pub carried: bool,
 }
 
+/// A merchant's request for an escort, as the screen needs it: one asked
+/// for here, or one the player has taken on.
+pub(super) struct EscortListing<'a> {
+    pub entity: Entity,
+    pub escort: &'a Escort,
+    pub ward: &'a str,
+    pub destination: &'a str,
+    /// What she carries under contract, if anything.
+    pub cargo: Option<(GoodId, u32)>,
+    /// Whether the player has taken it on.
+    pub taken: bool,
+}
+
 /// A prize lying in port with the player, as the shipyard sees her.
 pub(super) struct PrizeListing<'a> {
     pub entity: Entity,
@@ -70,12 +106,27 @@ pub(super) struct PrizeListing<'a> {
     pub value: u32,
 }
 
+/// A new ship the yard offers: what she'd cost with the player's ship in
+/// part exchange, or why it won't sell her.
+pub(super) struct Offer {
+    pub class: ShipClass,
+    pub cost: Result<i64, Refusal>,
+}
+
 /// An officer looking for a post at the tavern.
 pub(super) struct Candidate<'a> {
     pub entity: Entity,
     pub name: &'a str,
     pub officer: &'a Officer,
     pub berth: Berth,
+}
+
+/// A loss the player was about for and can give an account of: what's
+/// asked, and what she could say, with a label for each.
+pub(super) struct AccountListing {
+    pub lost: Entity,
+    pub asked: String,
+    pub choices: Vec<(Fate, String)>,
 }
 
 /// The player's ship's battle damage.
@@ -97,23 +148,23 @@ pub(super) struct Context<'a> {
     pub market: &'a Market,
     pub trader: Trader<'a>,
     pub jobs: Vec<Listing<'a>>,
+    pub escorts: Vec<EscortListing<'a>>,
+    /// What the tavern talks of, as it was told to the player, a sentence
+    /// each.
+    pub word: Vec<String>,
+    pub accounts: Vec<AccountListing>,
     pub condition: Condition,
-    /// The player's standing with the port's nation.
-    pub standing: f32,
+    pub standing: &'a Standing,
+    /// The groups the player serves.
+    pub service: &'a Service,
+    /// The colours she flies.
+    pub colours: Option<Nation>,
     pub prizes: Vec<PrizeListing<'a>>,
+    /// The new ships the shipyard sells.
+    pub offers: Vec<Offer>,
     /// The player's quarterdeck, for hiring officers.
     pub deck: Quarterdeck<'a>,
     pub candidates: Vec<Candidate<'a>>,
-}
-
-pub(super) fn location_name(location: Location) -> &'static str {
-    match location {
-        Location::Tavern => "Tavern",
-        Location::Market => "Market",
-        Location::Shipyard => "Shipyard",
-        Location::GovernorsHouse => "Governor's House",
-        Location::MerchantsExchange => "Merchants' Exchange",
-    }
 }
 
 fn location_purpose(location: Location) -> &'static str {
@@ -138,7 +189,12 @@ pub(super) fn build(view: View, ctx: &Context) -> Panel {
                 Location::Shipyard => shipyard(ctx, &mut rows),
                 Location::GovernorsHouse | Location::MerchantsExchange => {}
             }
+            service_desk(ctx, location, &mut rows);
+            if location == Location::Tavern {
+                petitions(ctx, &mut rows);
+            }
             job_board(ctx, location, &mut rows);
+            escorts_wanted(ctx, location, &mut rows);
             rows.push(
                 Row::text(Style::Body, "").with_button("Back to town", Action::Go(View::Town)),
             );
@@ -148,7 +204,8 @@ pub(super) fn build(view: View, ctx: &Context) -> Panel {
         ctx.port_name.to_string(),
         format!(
             "Flag: {}. Your standing here: {:+.0}",
-            ctx.port.flag, ctx.standing
+            ctx.port.flag,
+            ctx.standing.with(ctx.port.flag)
         ),
         rows,
     )
@@ -173,17 +230,23 @@ fn town(ctx: &Context, rows: &mut Vec<Row>) {
         );
     }
 
-    let short: Vec<&str> = ctx
+    let needs: Vec<String> = ctx
         .market
         .entries
         .iter()
-        .filter(|entry| shortfall(entry).is_some())
-        .map(|entry| ctx.goods.get(entry.good).name.as_str())
+        .filter(|entry| entry.is_needed())
+        .map(|entry| {
+            let name = &ctx.goods.get(entry.good).name;
+            match shortfall(entry) {
+                Some(_) => format!("{name} (SHORT)"),
+                None => name.clone(),
+            }
+        })
         .collect();
-    if !short.is_empty() {
+    if !needs.is_empty() {
         rows.push(Row::text(
             Style::Faded,
-            format!("Short of: {}", short.join(", ")),
+            format!("The town needs: {}", needs.join(", ")),
         ));
     }
     rows.push(Row::text(
@@ -192,16 +255,22 @@ fn town(ctx: &Context, rows: &mut Vec<Row>) {
     ));
 
     let carried: Vec<&Listing> = ctx.jobs.iter().filter(|l| l.carried).collect();
-    if !carried.is_empty() {
+    let escorting: Vec<&EscortListing> = ctx.escorts.iter().filter(|e| e.taken).collect();
+    if !carried.is_empty() || !escorting.is_empty() {
         rows.push(Row::text(Style::Heading, "Your contracts"));
         rows.extend(carried.into_iter().map(|listing| job_row(ctx, listing)));
+        rows.extend(
+            escorting
+                .into_iter()
+                .map(|listing| escort_row(ctx, listing)),
+        );
     }
     rows.push(Row::text(Style::Body, "").with_button("Cast Off", Action::CastOff));
 }
 
 fn market(ctx: &Context, rows: &mut Vec<Row>) {
     rows.push(Row {
-        cells: ["Good", "Stock", "Buy at", "Sell at", "Aboard"]
+        cells: ["Good", "Stock", "Wanted", "Buy at", "Sell at", "Aboard"]
             .map(String::from)
             .to_vec(),
         buttons: Vec::new(),
@@ -216,6 +285,7 @@ fn market(ctx: &Context, rows: &mut Vec<Row>) {
             cells: vec![
                 good.name.clone(),
                 format!("{:.0}", entry.stock.floor()),
+                wanted(entry),
                 asking_price(entry, good.base_price, 1)
                     .map_or("—".to_string(), |price| price.to_string()),
                 bid_price(entry, good.base_price, 1).to_string(),
@@ -253,6 +323,17 @@ fn market(ctx: &Context, rows: &mut Vec<Row>) {
     }
 }
 
+/// How much more of a good the town wants, if it needs it at all: the gap
+/// below its target, marked when it's short enough to post work.
+fn wanted(entry: &MarketEntry) -> String {
+    let gap = entry.target - entry.stock;
+    match shortfall(entry) {
+        Some(_) => format!("{gap:.0} SHORT"),
+        None if entry.is_needed() && gap >= 1.0 => format!("{gap:.0}"),
+        None => "—".to_string(),
+    }
+}
+
 fn shipyard(ctx: &Context, rows: &mut Vec<Row>) {
     let condition = &ctx.condition;
     if condition.repair_cost == 0 {
@@ -276,6 +357,7 @@ fn shipyard(ctx: &Context, rows: &mut Vec<Row>) {
             row
         });
     }
+    offers(ctx, rows);
     if ctx.prizes.is_empty() {
         return;
     }
@@ -298,10 +380,49 @@ fn shipyard(ctx: &Context, rows: &mut Vec<Row>) {
     }
 }
 
+/// The new ships for sale, each with her particulars and what she'd cost
+/// with the player's ship in part exchange.
+fn offers(ctx: &Context, rows: &mut Vec<Row>) {
+    if ctx.offers.is_empty() {
+        return;
+    }
+    rows.push(Row::text(
+        Style::Heading,
+        "New ships, yours in part exchange",
+    ));
+    for offer in &ctx.offers {
+        let class = &offer.class;
+        let particulars = format!(
+            "{}: {} guns, {:.0} tons, {} hands to sail and {} to fight, {} berths, {:.1} knots",
+            class.name,
+            class.guns,
+            class.hold_tons,
+            class.complement.min,
+            class.complement.full,
+            class.complement.berths,
+            class.hull.speed_mps * MPS_TO_KNOTS,
+        );
+        rows.push(match offer.cost {
+            Ok(cost) => {
+                let terms = if cost >= 0 {
+                    format!("costs {cost} pieces of eight")
+                } else {
+                    format!("the yard pays you {}", -cost)
+                };
+                Row::text(Style::Body, format!("{particulars}: {terms}"))
+                    .with_button("Buy", Action::BuyShip(*class))
+            }
+            Err(refusal) => Row::text(Style::Body, format!("{particulars}: {refusal}")),
+        });
+    }
+}
+
 fn tavern(ctx: &Context, rows: &mut Vec<Row>) {
     let sailors = ctx.goods.sailors;
     shore_leave(ctx, rows);
     officers_for_hire(ctx, rows);
+    accounts(ctx, rows);
+    hearsay(ctx, rows);
     let Some(entry) = ctx.market.entry(sailors) else {
         rows.push(Row::text(
             Style::Body,
@@ -341,6 +462,42 @@ fn tavern(ctx: &Context, rows: &mut Vec<Row>) {
         }
     }
     rows.push(row);
+}
+
+/// The losses the player was about for, and what she could say of each.
+/// Whatever she says is taken at her word, until the truth comes out.
+fn accounts(ctx: &Context, rows: &mut Vec<Row>) {
+    if ctx.accounts.is_empty() {
+        return;
+    }
+    rows.push(Row::text(Style::Heading, "They'll want your account"));
+    for listing in &ctx.accounts {
+        let mut row = Row::text(Style::Body, listing.asked.clone());
+        for (says, label) in &listing.choices {
+            row = row.with_button(
+                label.clone(),
+                Action::GiveAccount {
+                    lost: listing.lost,
+                    says: *says,
+                },
+            );
+        }
+        rows.push(row);
+    }
+}
+
+/// What the tavern talks of: ships sailing, deeds done, wrecks. It may
+/// not all be true.
+fn hearsay(ctx: &Context, rows: &mut Vec<Row>) {
+    rows.push(Row::text(Style::Heading, "Talk in the tavern"));
+    if ctx.word.is_empty() {
+        rows.push(Row::text(Style::Faded, "No news worth the telling."));
+    }
+    rows.extend(
+        ctx.word
+            .iter()
+            .map(|line| Row::text(Style::Body, line.clone())),
+    );
 }
 
 fn shore_leave(ctx: &Context, rows: &mut Vec<Row>) {
@@ -400,6 +557,60 @@ fn officers_for_hire(ctx: &Context, rows: &mut Vec<Row>) {
     }
 }
 
+/// The groups of the port's nation that keep their office at `location`,
+/// with the player's standing and post with each, and a Join button where
+/// she can.
+fn service_desk(ctx: &Context, location: Location, rows: &mut Vec<Row>) {
+    let here = ctx
+        .port
+        .flag
+        .groups()
+        .into_iter()
+        .filter(|group| office(&ctx.port.locations, group.kind) == Some(location));
+    for group in here {
+        let mut row = Row::text(
+            Style::Body,
+            format!("{group}: you stand {:+.0}", ctx.standing.of(group)),
+        );
+        if let Some(post) = ctx.service.post(group) {
+            row.cells
+                .push(format!("You serve as {}: {}", post.title(), post.perk()));
+        } else {
+            row = match check_join(group, ctx.port, ctx.standing, ctx.service, ctx.colours) {
+                Ok(()) => row.with_button("Join", Action::Join(group)),
+                Err(refusal) => {
+                    row.cells.push(format!("({refusal})"));
+                    row
+                }
+            };
+        }
+        rows.push(row);
+    }
+}
+
+/// A lawyer's offer to petition each crown that wants the player.
+fn petitions(ctx: &Context, rows: &mut Vec<Row>) {
+    for nation in nations() {
+        let row = |fee: u32| {
+            Row::text(
+                Style::Body,
+                format!(
+                    "A lawyer will carry your petition for a pardon to {nation}, for {fee} pieces of eight"
+                ),
+            )
+        };
+        match check_petition(ctx.standing, nation, ctx.trader.purse, ctx.port) {
+            Ok(fee) => rows.push(row(fee).with_button("Petition", Action::Petition(nation))),
+            Err(NoPetition::TooDear(fee)) => {
+                let mut row = row(fee);
+                row.cells.push("(you can't pay him)".to_string());
+                rows.push(row);
+            }
+            Err(NoPetition::NotWanted | NoPetition::NoLawyer) => {}
+        }
+    }
+}
+
 /// Jobs offered at `location`, with an Accept button on those the ship can take.
 fn job_board(ctx: &Context, location: Location, rows: &mut Vec<Row>) {
     let offered: Vec<&Listing> = ctx
@@ -408,8 +619,7 @@ fn job_board(ctx: &Context, location: Location, rows: &mut Vec<Row>) {
         .filter(|listing| {
             !listing.carried
                 && listing.job.origin == ctx.port_entity
-                && job_office(&ctx.port.locations, ctx.goods.carriage(listing.job.good))
-                    == Some(location)
+                && listing.job.office(ctx.goods, ctx.port) == Some(location)
         })
         .collect();
     let is_office = matches!(
@@ -452,13 +662,56 @@ fn job_board(ctx: &Context, location: Location, rows: &mut Vec<Row>) {
     }
 }
 
+/// Merchants sailing from here who want an escort, at the merchants'
+/// office, with an Accept button on those the player can take on.
+fn escorts_wanted(ctx: &Context, location: Location, rows: &mut Vec<Row>) {
+    if office(&ctx.port.locations, GroupKind::Merchants) != Some(location) {
+        return;
+    }
+    let wanted: Vec<&EscortListing> = ctx
+        .escorts
+        .iter()
+        .filter(|listing| !listing.taken && listing.escort.origin == ctx.port_entity)
+        .collect();
+    if wanted.is_empty() {
+        return;
+    }
+    rows.push(Row::text(Style::Heading, "Escorts wanted"));
+    rows.push(Row::text(
+        Style::Faded,
+        "She sails when you do, and pays if she comes in with you in sight.",
+    ));
+    for listing in wanted {
+        let row = escort_row(ctx, listing);
+        rows.push(match check_escort(listing.escort, ctx.port_entity) {
+            Ok(()) => row.with_button("Accept", Action::AcceptEscort(listing.entity)),
+            Err(refusal) => {
+                let mut row = row;
+                row.cells.push(format!("({refusal})"));
+                row
+            }
+        });
+    }
+}
+
+fn escort_row(ctx: &Context, listing: &EscortListing) -> Row {
+    let cargo = listing.cargo.map_or(String::new(), |(good, quantity)| {
+        format!(", with {}", amount(ctx.goods, good, quantity))
+    });
+    let verb = if listing.taken { "Escorting" } else { "Escort" };
+    Row::text(
+        Style::Body,
+        format!(
+            "{verb} the {} to {}{cargo}: {} pieces of eight",
+            listing.ward, listing.destination, listing.escort.fee
+        ),
+    )
+}
+
 fn job_row(ctx: &Context, listing: &Listing) -> Row {
     let job = listing.job;
     let good = ctx.goods.get(job.good);
-    let unit = match ctx.goods.carriage(job.good) {
-        Carriage::Hold => " t",
-        Carriage::Berths => "",
-    };
+    let unit = unit(ctx.goods, job.good);
     Row {
         cells: vec![
             format!("{}{unit} {}", job.quantity, good.name),
@@ -478,6 +731,7 @@ mod tests {
     use crate::crew::{Complement, Crew};
     use crate::economy::market::MarketEntry;
     use crate::officers::{Loyalty, Role};
+    use crate::shipyard::{PartExchange, check_purchase};
 
     struct Fixture {
         goods: Goods,
@@ -492,10 +746,21 @@ mod tests {
         /// A prize lying here, if any.
         prize: Option<Entity>,
         gunner: Officer,
+        standing: Standing,
+        service: Service,
+        /// A merchant's request for an escort from here, and whether the
+        /// player has taken it.
+        escort: Option<(Escort, bool)>,
+        /// What the tavern talks of.
+        word: Vec<String>,
+        /// Whether the player was about when a ship was lost.
+        lost_nearby: bool,
     }
 
     const PORT: Entity = Entity::PLACEHOLDER;
+    const ESCORT: Entity = Entity::from_raw_u32(13).unwrap();
     const GUNNER: Entity = Entity::from_raw_u32(11).unwrap();
+    const DOVE: Entity = Entity::from_raw_u32(15).unwrap();
 
     fn fixture() -> Fixture {
         let goods = Goods::standard();
@@ -520,10 +785,11 @@ mod tests {
             destination: Entity::from_raw_u32(7).unwrap(),
             payment: 150,
             deadline: crate::clock::DAY,
+            introduction: None,
         };
         Fixture {
             port: Port {
-                flag: crate::factions::Nation::England,
+                flag: crate::factions::Nation::ENGLAND,
                 town: Vec3::ZERO,
                 locations: vec![
                     Location::Tavern,
@@ -549,6 +815,11 @@ mod tests {
                 loyalty: Loyalty::Loyal,
                 confined: false,
             },
+            standing: Standing::default(),
+            service: Service::default(),
+            escort: None,
+            word: Vec::new(),
+            lost_nearby: false,
         }
     }
 
@@ -573,12 +844,58 @@ mod tests {
                     destination: "Nassau",
                     carried: false,
                 }],
-                standing: 10.0,
+                escorts: self
+                    .escort
+                    .iter()
+                    .map(|(escort, taken)| EscortListing {
+                        entity: ESCORT,
+                        escort,
+                        ward: "Swallow",
+                        destination: "Santiago",
+                        cargo: Some((self.job.good, 20)),
+                        taken: *taken,
+                    })
+                    .collect(),
+                word: self.word.clone(),
+                accounts: self
+                    .lost_nearby
+                    .then(|| AccountListing {
+                        lost: DOVE,
+                        asked: "Dove was lost 2 days ago. How was she lost?".to_string(),
+                        choices: vec![
+                            (Fate::Wrecked, "Wrecked".to_string()),
+                            (Fate::Taken(ESCORT), "Taken by Ranger".to_string()),
+                        ],
+                    })
+                    .into_iter()
+                    .collect(),
+                standing: &self.standing,
+                service: &self.service,
+                colours: Some(self.port.flag),
                 condition: Condition {
                     timbers: self.timbers,
                     rigging: 1.0,
                     repair_cost: ((1.0 - self.timbers) * 1000.0) as u32,
                 },
+                offers: ShipClass::for_sale()
+                    .filter(|class| *class != ShipClass::sloop())
+                    .map(|class| Offer {
+                        class,
+                        cost: check_purchase(
+                            &self.goods,
+                            &self.port,
+                            &class,
+                            PartExchange {
+                                class: &ShipClass::sloop(),
+                                timbers: self.timbers,
+                                rigging: 1.0,
+                                hold: &self.hold,
+                                crew: &self.crew,
+                            },
+                            Purse(purse),
+                        ),
+                    })
+                    .collect(),
                 prizes: self
                     .prize
                     .iter()
@@ -638,7 +955,7 @@ mod tests {
         }
         assert!(!actions.contains(&Action::Go(View::At(Location::GovernorsHouse))));
         assert!(actions.contains(&Action::CastOff));
-        assert!(text(&panel).contains("Short of: Timber"));
+        assert!(text(&panel).contains("The town needs: Timber (SHORT)"));
     }
 
     #[test]
@@ -668,6 +985,100 @@ mod tests {
 
         let poor = f.panel(View::At(Location::Market), 0);
         assert!(!actions(&poor).contains(&buy(1)), "can't afford it");
+    }
+
+    #[test]
+    fn a_group_takes_proven_captains_at_its_office() {
+        let mut f = fixture();
+        let merchants = Group {
+            nation: f.port.flag,
+            kind: crate::factions::GroupKind::Merchants,
+        };
+        let exchange = || View::At(Location::MerchantsExchange);
+        let unproven = f.panel(exchange(), 500);
+        assert!(text(&unproven).contains("the Jamaica merchants: you stand +10"));
+        assert!(!actions(&unproven).contains(&Action::Join(merchants)));
+        f.standing.set_group(merchants, 25.0);
+        assert!(actions(&f.panel(exchange(), 500)).contains(&Action::Join(merchants)));
+        f.service = Service(vec![crate::service::Post {
+            group: merchants,
+            rank: 0,
+        }]);
+        assert!(text(&f.panel(exchange(), 500)).contains("You serve as Associate"));
+        let navy_here = text(&f.panel(View::At(Location::Tavern), 500));
+        assert!(
+            navy_here.contains("the Royal Navy"),
+            "no governor here, so the navy meets in the tavern"
+        );
+    }
+
+    #[test]
+    fn the_exchange_finds_merchants_an_escort_and_the_town_lists_it_once_taken() {
+        let mut f = fixture();
+        let escort = Escort {
+            ward: Entity::from_raw_u32(14).unwrap(),
+            nation: Nation::ENGLAND,
+            origin: PORT,
+            destination: Entity::from_raw_u32(7).unwrap(),
+            fee: 60,
+            escort: None,
+            lost_at: None,
+        };
+        f.escort = Some((escort, false));
+        let exchange = f.panel(View::At(Location::MerchantsExchange), 500);
+        assert!(actions(&exchange).contains(&Action::AcceptEscort(ESCORT)));
+        assert!(
+            text(&exchange).contains("Escort the Swallow to Santiago, with 20 t rum: 60 pieces")
+        );
+        assert!(!text(&f.panel(View::At(Location::Tavern), 500)).contains("Swallow"));
+
+        f.escort = Some((escort, true));
+        assert!(
+            !actions(&f.panel(View::At(Location::MerchantsExchange), 500))
+                .contains(&Action::AcceptEscort(ESCORT))
+        );
+        assert!(text(&f.panel(View::Town, 500)).contains("Escorting the Swallow to Santiago"));
+    }
+
+    #[test]
+    fn the_tavern_asks_for_an_account_of_a_loss_she_was_about_for() {
+        let mut f = fixture();
+        assert!(!text(&f.panel(View::At(Location::Tavern), 500)).contains("account"));
+        f.lost_nearby = true;
+        let tavern = f.panel(View::At(Location::Tavern), 500);
+        assert!(text(&tavern).contains("Dove was lost"));
+        let told: Vec<Action> = actions(&tavern)
+            .into_iter()
+            .filter(|action| matches!(action, Action::GiveAccount { .. }))
+            .collect();
+        assert_eq!(
+            told,
+            [Fate::Wrecked, Fate::Taken(ESCORT)]
+                .map(|says| Action::GiveAccount { lost: DOVE, says })
+        );
+    }
+
+    #[test]
+    fn the_tavern_talks_of_the_news() {
+        let mut f = fixture();
+        let quiet = text(&f.panel(View::At(Location::Tavern), 500));
+        assert!(quiet.contains("No news worth the telling."));
+        f.word = vec!["Ranger took Dove off Kingston 2 days ago.".to_string()];
+        let talk = text(&f.panel(View::At(Location::Tavern), 500));
+        assert!(talk.contains("Ranger took Dove off Kingston"), "{talk}");
+    }
+
+    #[test]
+    fn a_lawyer_in_the_tavern_petitions_a_crown_that_wants_her() {
+        let mut f = fixture();
+        f.port.flag = Nation::PIRATES;
+        let petition = Action::Petition(Nation::ENGLAND);
+        assert!(!actions(&f.panel(View::At(Location::Tavern), 10_000)).contains(&petition));
+        f.standing.set(Nation::ENGLAND, -40.0);
+        assert!(actions(&f.panel(View::At(Location::Tavern), 10_000)).contains(&petition));
+        let poor = f.panel(View::At(Location::Tavern), 10);
+        assert!(!actions(&poor).contains(&petition));
+        assert!(text(&poor).contains("(you can't pay him)"));
     }
 
     #[test]
@@ -736,6 +1147,26 @@ mod tests {
             !actions(&damaged.panel(view, 100)).contains(&Action::Repair),
             "costs 400"
         );
+    }
+
+    #[test]
+    fn the_shipyard_sells_the_ships_she_can_pay_for() {
+        let buys = |purse| {
+            let panel = fixture().panel(View::At(Location::Shipyard), purse);
+            actions(&panel)
+                .into_iter()
+                .filter_map(|action| match action {
+                    Action::BuyShip(class) => Some(class.name),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let panel = fixture().panel(View::At(Location::Shipyard), 0);
+        assert!(text(&panel).contains("Frigate"), "every class is shown");
+        assert!(text(&panel).contains("can't afford it"));
+        assert!(!buys(0).contains(&"Frigate"));
+        assert!(!buys(0).contains(&"Sloop"), "not the class she sails");
+        assert!(buys(100_000).contains(&"Frigate"));
     }
 
     #[test]

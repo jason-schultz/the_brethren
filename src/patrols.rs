@@ -1,30 +1,28 @@
-//! Navy patrols: well-manned sloops-of-war cruising between the ports of
-//! their beat. A patrol hunts her nation's enemies (see [`crate::hunting`]).
+//! Navy patrols: well-manned sloops-of-war of the lawful nations' navies
+//! (from the factions data), cruising between the ports of their beat. A patrol hunts her nation's enemies (see [`crate::hunting`]).
 //! Patrols are victualled for free at their own nation's ports, and a lost
-//! one is replaced.
+//! one is replaced. When a nation hears of one of its ships wrecked in
+//! shallow water, its nearest patrol stands guard over her, salvaging what
+//! she can for her home port, and hunts whoever else dives on her.
 
 use bevy::prelude::*;
 
 use crate::cargo::{Hold, Purse};
 use crate::clock::{DAY, WorldClock};
 use crate::combat::{EngageOrder, Engaged, Struck};
-use crate::factions::{Colours, NATIONS, Nation, Relations};
+use crate::economy::market::Market;
+use crate::factions::{Colours, GroupKind, Nation, Relations, Serves, nations};
 use crate::goods::Goods;
 use crate::hunting::{Hunter, Pursuit, Sea, pursue};
 use crate::merchants::{Harbour, harbours};
 use crate::navigation::{Arrival, Route, SailOrder};
 use crate::port::{Docked, Port};
-use crate::roster::Roster;
+use crate::roster::{Listed, Roster};
 use crate::schedule::SimSet;
 use crate::ship_class::ShipClass;
+use crate::word::{Happening, Ledger};
+use crate::wrecks::{SALVAGE_RANGE, Wreck};
 
-/// The Royal Navy's Jamaica station, and a guarda costa out of Santiago.
-const NAMES: [&str; 3] = ["HMS Swift", "HMS Ferret", "San Miguel"];
-/// The nation each of [`NAMES`] sails for.
-const FLAGS: [Nation; NAMES.len()] = [Nation::England, Nation::England, Nation::Spain];
-/// A full fighting crew, every gun mounted.
-const CREW: u32 = 40;
-const GUNS: u32 = ShipClass::SLOOP.guns;
 const PURSE: u32 = 100;
 /// Tons of provisions carried, topped up at each home port.
 const PROVISIONS: f64 = 20.0;
@@ -35,6 +33,7 @@ const VICTUALLING: f32 = 200.0;
 
 /// A navy ship on patrol, and the port on her beat she's bound for next.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+#[require(Serves(GroupKind::Navy))]
 pub struct Patrol {
     pub next: usize,
     /// A sail order is given but not yet a route. Orders become routes once
@@ -55,8 +54,18 @@ impl Patrol {
 struct Admiralty(Roster);
 
 impl Default for Admiralty {
+    /// Every lawful nation's navy, from the factions data.
     fn default() -> Self {
-        Self(Roster::new(&NAMES, REPLACEMENT))
+        Self(Roster::of_fleets(
+            |nation| {
+                if nation.is_crown() {
+                    &nation.fleet().navy
+                } else {
+                    &[]
+                }
+            },
+            REPLACEMENT,
+        ))
     }
 }
 
@@ -71,17 +80,17 @@ impl Plugin for PatrolsPlugin {
     }
 }
 
-/// A patrol for `nation` named `name` at `at`, beginning her beat at port
-/// `next`.
-fn patrol_ship(goods: &Goods, name: &str, nation: Nation, at: Vec3, next: usize) -> impl Bundle {
-    let class = ShipClass::SLOOP;
+/// A patrol from the roster at `at`, beginning her beat at port `next`: a
+/// full fighting crew, and every gun mounted.
+fn patrol_ship(goods: &Goods, listed: Listed, at: Vec3, next: usize) -> impl Bundle {
+    let class = listed.class;
     let mut hold = class.empty_hold();
     hold.owned.add(goods.provisions, PROVISIONS);
     (
-        Name::new(name.to_string()),
+        Name::new(listed.name),
         Patrol::bound_for(next),
-        Colours(nation),
-        class.build(CREW, GUNS, hold),
+        Colours(listed.nation),
+        class.build(class.complement.full, class.guns, hold),
         Purse(PURSE),
         Transform::from_translation(at),
     )
@@ -115,13 +124,15 @@ pub fn patrol_squadron(
     ports: &Query<(Entity, &Port, &Transform)>,
     relations: &Relations,
 ) -> Vec<impl Bundle> {
-    NAMES
-        .iter()
-        .zip(FLAGS)
+    Admiralty::default()
+        .0
+        .ships
+        .into_iter()
         .enumerate()
-        .filter_map(|(i, (name, nation))| {
+        .filter_map(|(i, listed)| {
+            let nation = listed.nation;
             let (at, next) = station(&beat(ports, relations, nation), nation, i)?;
-            Some(patrol_ship(goods, name, nation, at, next))
+            Some(patrol_ship(goods, listed, at, next))
         })
         .collect()
 }
@@ -144,10 +155,22 @@ fn patrol(
         (Without<Engaged>, Without<Struck>, Without<Docked>),
     >,
     sea: Sea,
+    (ledger, wrecks, mut markets): (
+        Res<Ledger>,
+        Query<(Entity, &Transform, &Wreck)>,
+        Query<&mut Market>,
+    ),
     mut engagements: MessageWriter<EngageOrder>,
     mut orders: MessageWriter<SailOrder>,
 ) {
-    let beats = NATIONS.map(|nation| beat(&ports, &relations, nation));
+    let beats: Vec<Vec<Harbour>> = nations()
+        .map(|nation| beat(&ports, &relations, nation))
+        .collect();
+    let positions: Vec<(Entity, Nation, Vec3)> = patrols
+        .iter()
+        .map(|(ship, _, colours, at, ..)| (ship, colours.0, at.translation))
+        .collect();
+    let guards = guard_duty(&ledger, &wrecks, &positions);
     for (ship, mut patrol, &Colours(nation), at, mut hold, route) in &mut patrols {
         let beat = &beats[nation.index()];
         if let Some((target, quarry)) = sea.nearest_quarry(Hunter::Navy(nation), at.translation) {
@@ -167,6 +190,18 @@ fn patrol(
             }
             continue;
         }
+        if let Some(&(_, lies)) = guards.iter().find(|(guard, _)| *guard == ship) {
+            let heading_for = route.and_then(|route| route.waypoints.back().copied());
+            let closing = heading_for.is_some_and(|end| end.distance(lies) <= SALVAGE_RANGE);
+            if at.translation.distance(lies) > SALVAGE_RANGE && !closing {
+                orders.write(SailOrder {
+                    ship,
+                    destination: lies,
+                    on_arrival: Arrival::HeaveTo,
+                });
+            }
+            continue;
+        }
         if beat.is_empty() {
             continue;
         }
@@ -182,6 +217,10 @@ fn patrol(
         if beat[here].1 == nation && at.translation.distance(beat[here].2) < VICTUALLING {
             let short = PROVISIONS - hold.owned.get(goods.provisions);
             hold.owned.add(goods.provisions, short.max(0.0));
+            // What she salvaged goes ashore, to the port's stores.
+            if let Ok(mut market) = markets.get_mut(beat[here].0) {
+                land_salvage(&goods, &mut hold, &mut market);
+            }
         }
         let (_, _, station) = beat[patrol.next % beat.len()];
         orders.write(SailOrder {
@@ -194,6 +233,53 @@ fn patrol(
     }
 }
 
+/// Which patrol guards which of her nation's wrecks: of every wreck worth
+/// diving on that its nation has heard of, the patrol of that nation in
+/// `patrols` nearest it.
+fn guard_duty(
+    ledger: &Ledger,
+    wrecks: &Query<(Entity, &Transform, &Wreck)>,
+    patrols: &[(Entity, Nation, Vec3)],
+) -> Vec<(Entity, Vec3)> {
+    ledger
+        .news
+        .iter()
+        .filter_map(|news| match news.event {
+            Happening::Wrecked {
+                wreck: Some(wreck),
+                nation: Some(nation),
+                ..
+            } if news.heard_by.contains(&nation) => Some((wreck, nation)),
+            _ => None,
+        })
+        .filter_map(|(wreck, nation)| {
+            let (_, lies, remains) = wrecks.get(wreck).ok()?;
+            let lies = lies.translation;
+            let (guard, ..) = patrols
+                .iter()
+                .filter(|(_, flag, _)| *flag == nation)
+                .filter(|_| remains.has_anything())
+                .min_by(|a, b| a.2.distance(lies).total_cmp(&b.2.distance(lies)))?;
+            Some((*guard, lies))
+        })
+        .collect()
+}
+
+/// Lands everything in `hold` but provisions into `market`, for the goods
+/// it deals in.
+fn land_salvage(goods: &Goods, hold: &mut Hold, market: &mut Market) {
+    let cargo: Vec<_> = hold
+        .owned
+        .iter()
+        .filter(|&(good, _)| good != goods.provisions)
+        .collect();
+    for (good, tons) in cargo {
+        if let Some(entry) = market.entry_mut(good) {
+            entry.stock += hold.owned.remove(good, tons);
+        }
+    }
+}
+
 fn commission_patrols(
     clock: Res<WorldClock>,
     goods: Res<Goods>,
@@ -203,12 +289,12 @@ fn commission_patrols(
     mut admiralty: ResMut<Admiralty>,
     mut commands: Commands,
 ) {
-    let Some((index, name)) = admiralty.0.due(ships.iter(), clock.elapsed) else {
+    let Some((index, listed)) = admiralty.0.due(ships.iter(), clock.elapsed) else {
         return;
     };
-    let nation = FLAGS[index];
+    let nation = listed.nation;
     if let Some((at, next)) = station(&beat(&ports, &relations, nation), nation, index) {
-        commands.spawn(patrol_ship(&goods, name, nation, at, next));
+        commands.spawn(patrol_ship(&goods, listed, at, next));
     }
 }
 
@@ -250,7 +336,7 @@ mod tests {
         let (mut app, _) = new_game();
         fast(&mut app);
         let ships = patrols(&mut app);
-        assert_eq!(ships.len(), NAMES.len());
+        assert_eq!(ships.len(), Admiralty::default().0.ships.len());
         let start: Vec<Vec3> = ships
             .iter()
             .map(|&ship| app.world().get::<Transform>(ship).unwrap().translation)
@@ -275,7 +361,7 @@ mod tests {
     /// Puts an English patrol and the player in open water south of Port
     /// Royal, 1.5 km apart.
     fn near_a_patrol(app: &mut App, player: Entity) -> Entity {
-        let patrol = named(app, NAMES[0]);
+        let patrol = named(app, Admiralty::default().0.ships[0].name);
         let port_royal = named(app, "Port Royal");
         let offshore = app
             .world()
@@ -308,8 +394,9 @@ mod tests {
         );
 
         app.world_mut()
-            .resource_mut::<Standing>()
-            .set(Nation::England, -50.0);
+            .get_mut::<Standing>(player)
+            .unwrap()
+            .set(Nation::ENGLAND, -50.0);
         let attacked = run_until(&mut app, 3600.0, |world| {
             world
                 .get::<Engaged>(patrol)
@@ -357,8 +444,9 @@ mod tests {
             app.world_mut().despawn(patrol);
         }
         app.world_mut()
-            .resource_mut::<Standing>()
-            .set(Nation::England, -50.0);
+            .get_mut::<Standing>(player)
+            .unwrap()
+            .set(Nation::ENGLAND, -50.0);
         app.world_mut().write_message(CastOff { ship: player });
         let kingston = named(&mut app, "Kingston");
         let anchorage = app.world().get::<Transform>(kingston).unwrap().translation;

@@ -75,6 +75,16 @@ impl Land {
         self.masses.iter().any(|mass| mass.contains(position))
     }
 
+    /// How far `at` is from the nearest land of `terrain`, in meters:
+    /// infinite if there's none.
+    pub fn distance_to(&self, at: Vec3, terrain: Terrain) -> f32 {
+        self.masses
+            .iter()
+            .filter(|mass| mass.terrain == terrain)
+            .map(|mass| mass.clearance(at, at))
+            .fold(f32::INFINITY, f32::min)
+    }
+
     /// How close the straight leg `from–to` comes to any land, in meters.
     /// Zero if it touches land; infinite on an empty map. Pass the same point
     /// twice for a point's distance from land.

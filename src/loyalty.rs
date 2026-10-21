@@ -19,7 +19,9 @@ use crate::combat::Engaged;
 use crate::combat::rounds::Dice;
 use crate::crew::Crew;
 use crate::economy::jobs::Carrier;
-use crate::factions::{Colours, Deed, DeedKind, NATIONS, Nation, Standing};
+use crate::factions::{
+    CaptainRecord, Colours, Deed, DeedKind, Group, GroupKind, Nation, Standing, nations,
+};
 use crate::goods::Goods;
 use crate::math::heading_to_rotation;
 use crate::navigation::{Arrival, Arrived};
@@ -121,7 +123,7 @@ pub fn mutiny_succeeds(crew: u32, morale: f32, loyal_officers: u32) -> bool {
 /// `standing` there: one who has crossed it, but isn't wanted, since a
 /// wanted captain isn't let in.
 pub fn informers_paid(nation: Nation, standing: &Standing) -> bool {
-    nation != Nation::Pirates && standing.with(nation) < 0.0 && !standing.wanted_by(nation)
+    nation.is_crown() && standing.with(nation) < 0.0 && !standing.wanted_by(nation)
 }
 
 /// The first name in the boat's line that no ship bears.
@@ -159,7 +161,7 @@ fn scheme(
     let (ship, crew, docked) = *player;
     let lawful = docked
         .and_then(|docked| ports.get(docked.port).ok())
-        .is_some_and(|port| port.flag != Nation::Pirates);
+        .is_some_and(|port| port.flag.is_crown());
     for (officer_entity, officer, berth) in &officers {
         if *berth != Berth::Aboard(ship) {
             continue;
@@ -180,17 +182,17 @@ fn scheme(
 }
 
 /// What a lost ship's captain is left with.
-struct Boat {
-    at: Vec3,
-    heading: f32,
-    docked: Option<Entity>,
-    hands: u32,
-    purse: u32,
+pub(crate) struct Boat {
+    pub at: Vec3,
+    pub heading: f32,
+    pub docked: Option<Entity>,
+    pub hands: u32,
+    pub purse: u32,
 }
 
 /// The ship and fleet a captain loses, and what she keeps.
 #[derive(SystemParam)]
-struct Captaincy<'w, 's> {
+pub(crate) struct Captaincy<'w, 's> {
     goods: Res<'w, Goods>,
     names: Query<'w, 's, &'static Name>,
     colours: Query<'w, 's, &'static Colours>,
@@ -198,21 +200,21 @@ struct Captaincy<'w, 's> {
     officers: Query<'w, 's, (Entity, &'static Officer, &'static mut Berth)>,
     jobs: Query<'w, 's, (Entity, &'static Carrier)>,
     deeds: MessageWriter<'w, Deed>,
-    commands: Commands<'w, 's>,
+    pub commands: Commands<'w, 's>,
 }
 
 impl Captaincy<'_, '_> {
     /// Takes `ship` from the player, leaving her `boat`. Her prizes and loyal
     /// officers follow her into it, except prizes lying at `seized_at`; her
     /// contracts go with the ship. Word gets around. Returns the boat.
-    fn lose(&mut self, ship: Entity, boat: Boat, seized_at: Option<Entity>) -> Entity {
-        let mut hold = ShipClass::LONGBOAT.empty_hold();
+    pub(crate) fn lose(&mut self, ship: Entity, boat: Boat, seized_at: Option<Entity>) -> Entity {
+        let mut hold = ShipClass::boat().empty_hold();
         hold.owned.add(self.goods.provisions, BOAT_PROVISIONS);
         let mut spawned = self.commands.spawn((
             Name::new(boat_name(self.names.iter())),
             Player,
             InSight::default(),
-            ShipClass::LONGBOAT.build(boat.hands, 0, hold),
+            ShipClass::boat().build(boat.hands, 0, hold),
             Purse(boat.purse),
             Heading(boat.heading),
             Transform::from_translation(boat.at).with_rotation(heading_to_rotation(boat.heading)),
@@ -244,12 +246,21 @@ impl Captaincy<'_, '_> {
                 self.commands.entity(job).despawn();
             }
         }
-        self.commands.entity(ship).despawn();
-        for nation in NATIONS {
+        // Her name with the nations goes with her into the boat.
+        self.commands
+            .entity(ship)
+            .move_components::<CaptainRecord>(new)
+            .despawn();
+        for nation in nations() {
             self.deeds.write(Deed {
                 doer: new,
                 kind: DeedKind::LostCommand,
-                nation,
+                // The law takes note.
+                group: Group {
+                    nation,
+                    kind: GroupKind::Governor,
+                },
+                about: None,
             });
         }
         new
@@ -335,13 +346,12 @@ fn mutiny(
 fn betray(
     mut arrivals: MessageReader<Arrived>,
     mut dice: ResMut<Dice>,
-    standing: Res<Standing>,
-    player: Query<(Entity, &Heading, &Purse), With<Player>>,
+    player: Query<(Entity, &Heading, &Purse, &Standing), With<Player>>,
     ports: Query<(&Port, &Transform)>,
     mut captaincy: Captaincy,
     mut alerts: MessageWriter<Alert>,
 ) {
-    let Ok((ship, heading, purse)) = player.single() else {
+    let Ok((ship, heading, purse, standing)) = player.single() else {
         return;
     };
     for arrived in arrivals.read() {
@@ -351,7 +361,7 @@ fn betray(
         let Ok((details, anchorage)) = ports.get(port) else {
             continue;
         };
-        if arrived.ship != ship || !informers_paid(details.flag, &standing) {
+        if arrived.ship != ship || !informers_paid(details.flag, standing) {
             continue;
         }
         let traitor = captaincy
@@ -455,18 +465,18 @@ mod tests {
     fn only_a_crossed_lawful_nation_pays_informers() {
         let mut standing = Standing::default();
         assert!(
-            !informers_paid(Nation::England, &standing),
+            !informers_paid(Nation::ENGLAND, &standing),
             "in good standing"
         );
-        standing.set(Nation::England, -10.0);
-        assert!(informers_paid(Nation::England, &standing));
-        standing.set(Nation::England, -50.0);
+        standing.set(Nation::ENGLAND, -10.0);
+        assert!(informers_paid(Nation::ENGLAND, &standing));
+        standing.set(Nation::ENGLAND, -50.0);
         assert!(
-            !informers_paid(Nation::England, &standing),
+            !informers_paid(Nation::ENGLAND, &standing),
             "wanted: turned away"
         );
-        standing.set(Nation::Pirates, -10.0);
-        assert!(!informers_paid(Nation::Pirates, &standing));
+        standing.set(Nation::PIRATES, -10.0);
+        assert!(!informers_paid(Nation::PIRATES, &standing));
     }
 
     #[test]
@@ -477,9 +487,11 @@ mod tests {
     }
 
     /// The player at sea south of Port Royal, with a first mate of
-    /// `loyalty` aboard and her crew at `morale`.
+    /// `loyalty` aboard and her crew at `morale`. No raider or patrol comes
+    /// for her: a ship in action doesn't mutiny.
     fn at_sea_with(loyalty: Loyalty, morale: f32) -> (App, Entity, Entity) {
         let (mut app, player) = new_game();
+        crate::new_game::calm_seas(&mut app);
         app.world_mut()
             .resource_mut::<Time<Fixed>>()
             .set_timestep_seconds(MAX_STEP);
@@ -508,7 +520,11 @@ mod tests {
     #[test]
     fn an_ambitious_mate_and_a_mutinous_crew_take_the_ship() {
         let (mut app, ship, mate) = at_sea_with(Loyalty::Ambitious, 5.0);
-        let before = app.world().resource::<Standing>().with(Nation::England);
+        let before = app
+            .world()
+            .get::<Standing>(ship)
+            .unwrap()
+            .with(Nation::ENGLAND);
         // Hungry men stay mutinous.
         let provisions = app.world().resource::<Goods>().provisions;
         app.world_mut()
@@ -523,9 +539,27 @@ mod tests {
         app.update();
         let boat = player(&mut app);
         let world = app.world();
-        assert_eq!(world.get::<ShipClass>(boat), Some(&ShipClass::LONGBOAT));
+        assert_eq!(world.get::<ShipClass>(boat), Some(&ShipClass::boat()));
         assert!(world.get_entity(mate).is_err(), "he sailed off with her");
-        assert!(world.resource::<Standing>().with(Nation::England) < before);
+        let standing = |app: &App| {
+            app.world()
+                .get::<Standing>(boat)
+                .expect("her name went with her")
+                .with(Nation::ENGLAND)
+        };
+        assert_eq!(standing(&app), before, "no word of it yet");
+        // Word gets around once she makes port.
+        let port_royal = app
+            .world_mut()
+            .query_filtered::<Entity, With<Port>>()
+            .iter(app.world())
+            .next()
+            .unwrap();
+        app.world_mut()
+            .entity_mut(boat)
+            .insert(Docked { port: port_royal });
+        crate::test_support::run_seconds(&mut app, 10.0);
+        assert!(standing(&app) < before);
     }
 
     #[test]
@@ -563,8 +597,9 @@ mod tests {
     fn a_turncoat_sells_his_captain_out_in_a_port_she_has_crossed() {
         let (mut app, ship, _) = at_sea_with(Loyalty::Turncoat, 50.0);
         app.world_mut()
-            .resource_mut::<Standing>()
-            .set(Nation::England, -10.0);
+            .get_mut::<Standing>(ship)
+            .unwrap()
+            .set(Nation::ENGLAND, -10.0);
         let kingston = app
             .world_mut()
             .query::<(Entity, &Name)>()

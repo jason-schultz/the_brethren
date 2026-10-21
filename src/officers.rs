@@ -134,13 +134,12 @@ pub enum Origin {
 }
 
 impl Origin {
-    /// Chances of a loyal, an ambitious, and a turncoat officer. Pirate
-    /// havens breed ambition; prisoners have the least reason to love the
-    /// captain.
+    /// Chances of a loyal, an ambitious, and a turncoat officer: as the
+    /// factions data has them for a tavern's flag, and for prisoners, who
+    /// have the least reason to love the captain.
     pub fn odds(self) -> [f32; 3] {
         match self {
-            Self::Tavern(Nation::Pirates) => [0.4, 0.45, 0.15],
-            Self::Tavern(_) => [0.6, 0.25, 0.15],
+            Self::Tavern(nation) => nation.officer_odds(),
             Self::Prisoner => [0.35, 0.3, 0.35],
         }
     }
@@ -557,8 +556,8 @@ mod tests {
     #[test]
     fn rolls_cover_every_loyalty_in_proportion() {
         for origin in [
-            Origin::Tavern(Nation::England),
-            Origin::Tavern(Nation::Pirates),
+            Origin::Tavern(Nation::ENGLAND),
+            Origin::Tavern(Nation::PIRATES),
             Origin::Prisoner,
         ] {
             assert!((origin.odds().iter().sum::<f32>() - 1.0).abs() < 1e-6);
@@ -566,11 +565,11 @@ mod tests {
             assert_eq!(origin.loyalty(0.999), Loyalty::Turncoat);
         }
         assert_eq!(
-            Origin::Tavern(Nation::Pirates).loyalty(0.6),
+            Origin::Tavern(Nation::PIRATES).loyalty(0.6),
             Loyalty::Ambitious,
             "Nassau breeds ambition"
         );
-        assert_eq!(Origin::Tavern(Nation::England).loyalty(0.5), Loyalty::Loyal);
+        assert_eq!(Origin::Tavern(Nation::ENGLAND).loyalty(0.5), Loyalty::Loyal);
     }
 
     #[test]

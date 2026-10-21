@@ -30,7 +30,8 @@ impl Plugin for QuicksavePlugin {
     }
 }
 
-fn save_path() -> PathBuf {
+/// Where the quicksave is kept.
+pub fn save_path() -> PathBuf {
     user_file("quicksave.ron")
 }
 

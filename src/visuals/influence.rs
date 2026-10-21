@@ -15,7 +15,7 @@ use super::nation_colour;
 use crate::allegiance::{Favour, OWNER_REST};
 use crate::clock::{DAY, WorldClock};
 use crate::controls::{Control, used};
-use crate::factions::{Colours, NATIONS};
+use crate::factions::{Colours, nation_count, nations};
 use crate::map::Land;
 use crate::math::to_plane;
 use crate::patrols::Patrol;
@@ -55,8 +55,9 @@ struct Chart {
     /// The world rectangle it covers, in ocean-plane coordinates.
     bounds: Rect,
     size: UVec2,
-    /// Wake laid in each cell by each nation's ships.
-    wakes: Vec<[f32; NATIONS.len()]>,
+    /// Wake laid in each cell by each nation's ships: a row of one per
+    /// nation for each cell.
+    wakes: Vec<f32>,
     /// Whether each cell is land, which no one's colour covers.
     land: Vec<bool>,
     image: Handle<Image>,
@@ -108,16 +109,15 @@ pub fn port_hold(distance: f32, loyalty: f32) -> f32 {
 /// The colour a cell is washed with, from each nation's hold on it: the
 /// colours of every nation there, mixed by strength, as opaque as the
 /// strongest hold. Nobody's sea is clear.
-pub fn wash(holds: [f32; NATIONS.len()]) -> Color {
+pub fn wash(holds: &[f32]) -> Color {
     let total: f32 = holds.iter().sum();
     let strongest = holds.iter().copied().fold(0.0, f32::max).min(1.0);
     if strongest < FAINTEST {
         return Color::NONE;
     }
-    let mixed = NATIONS
-        .iter()
+    let mixed = nations()
         .zip(holds)
-        .fold(Vec3::ZERO, |sum, (&nation, hold)| {
+        .fold(Vec3::ZERO, |sum, (nation, &hold)| {
             sum + nation_colour(nation).to_linear().to_vec3() * hold / total
         });
     Color::LinearRgba(LinearRgba::from_vec3(mixed).with_alpha(MOST_ALPHA * strongest))
@@ -163,13 +163,13 @@ fn chart_the_sea(
     let mut chart = Chart {
         bounds,
         size,
-        wakes: vec![[0.0; NATIONS.len()]; (size.x * size.y) as usize],
+        wakes: vec![0.0; (size.x * size.y) as usize * nation_count()],
         land: Vec::new(),
         image: image.clone(),
         laid_at: 0.0,
         painted_at: f32::NEG_INFINITY,
     };
-    chart.land = (0..chart.wakes.len())
+    chart.land = (0..(size.x * size.y) as usize)
         .map(|i| {
             let at = chart.centre(i);
             land.contains(Vec3::new(at.x, 0.0, at.y))
@@ -229,15 +229,14 @@ fn lay_wakes(
         return;
     }
     let fade = 0.5_f64.powf(days / WAKE_HALF_LIFE) as f32;
-    for cell in &mut chart.wakes {
-        for wake in cell {
-            *wake *= fade;
-        }
+    for wake in &mut chart.wakes {
+        *wake *= fade;
     }
     for (at, colours, patrol) in &ships {
         if let Some(cell) = chart.cell(to_plane(at.translation)) {
             let weight = if patrol { PATROL_WAKE } else { 1.0 };
-            chart.wakes[cell][colours.0.index()] += WAKE_PER_DAY * weight * days as f32;
+            let wake = cell * nation_count() + colours.0.index();
+            chart.wakes[wake] += WAKE_PER_DAY * weight * days as f32;
         }
     }
 }
@@ -261,17 +260,20 @@ fn paint(
         .iter()
         .map(|(port, favour, at)| (port.flag, favour.of(port.flag), to_plane(at.translation)))
         .collect();
-    for (i, wakes) in chart.wakes.iter().enumerate() {
+    let mut holds = vec![0.0; nation_count()];
+    for (i, wakes) in chart.wakes.chunks(nation_count()).enumerate() {
         let colour = if chart.land[i] {
             Color::NONE
         } else {
             let at = chart.centre(i);
-            let mut holds = wakes.map(|wake| (wake / WAKE_HELD).min(1.0));
+            for (hold, wake) in holds.iter_mut().zip(wakes) {
+                *hold = (wake / WAKE_HELD).min(1.0);
+            }
             for &(flag, loyalty, port) in &ports {
                 let hold = &mut holds[flag.index()];
                 *hold = hold.max(port_hold(at.distance(port), loyalty));
             }
-            wash(holds)
+            wash(&holds)
         };
         let (x, y) = (i as u32 % chart.size.x, i as u32 / chart.size.x);
         // Every cell is inside the image it was sized for.
@@ -293,12 +295,12 @@ mod tests {
 
     #[test]
     fn the_sea_takes_the_colour_of_whoever_holds_it() {
-        assert_eq!(wash([0.0; 3]), Color::NONE, "nobody's sea is clear");
-        let english = wash([1.0, 0.0, 0.0]).to_linear();
-        let red = nation_colour(Nation::England).to_linear();
+        assert_eq!(wash(&[0.0; 3]), Color::NONE, "nobody's sea is clear");
+        let english = wash(&[1.0, 0.0, 0.0]).to_linear();
+        let red = nation_colour(Nation::ENGLAND).to_linear();
         assert_eq!((english.red, english.green), (red.red, red.green));
         assert_eq!(english.alpha, MOST_ALPHA);
-        let shared = wash([0.5, 0.5, 0.0]).to_linear();
+        let shared = wash(&[0.5, 0.5, 0.0]).to_linear();
         assert!(shared.green > english.green, "mixed with Spain's gold");
     }
 }

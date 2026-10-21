@@ -1,0 +1,13 @@
+[package]
+name = "chronicle"
+version = "0.1.0"
+description = "The records a run of False Colours writes, shared by the game and its tools."
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

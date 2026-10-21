@@ -16,8 +16,8 @@ use crate::clock::DAY;
 use crate::combat::rounds::Dice;
 use crate::economy::jobs::shortfall;
 use crate::economy::market::{Market, Supplied};
-use crate::factions::{Colours, Deed, DeedKind, NATIONS, Nation};
-use crate::goods::Goods;
+use crate::factions::{Colours, Deed, DeedKind, Group, GroupKind, Nation, nation_count, nations};
+use crate::goods::{GoodId, Goods};
 use crate::loyalty::chance_in;
 use crate::patrols::Patrol;
 use crate::player::Player;
@@ -61,13 +61,13 @@ const NEW_OWNER: f32 = 60.0;
 const OLD_OWNER: f32 = 10.0;
 
 /// How a port regards each nation, from 0 to 100.
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub struct Favour([f32; NATIONS.len()]);
+#[derive(Component, Debug, Clone, PartialEq)]
+pub struct Favour(Vec<f32>);
 
 impl Default for Favour {
     /// No nation's port in particular.
     fn default() -> Self {
-        Self([OTHER_REST; NATIONS.len()])
+        Self(vec![OTHER_REST; nation_count()])
     }
 }
 
@@ -95,7 +95,7 @@ impl Favour {
     /// fraction of what it needs that runs short) costs its `owner`.
     pub fn settle(&mut self, owner: Nation, neglect: f32, days: f32) {
         let pull = (SETTLING_PER_DAY * days).min(1.0);
-        for nation in NATIONS {
+        for nation in nations() {
             let rest = if nation == owner {
                 OWNER_REST
             } else {
@@ -108,8 +108,8 @@ impl Favour {
 
     /// `by` filled `share` of a shortage.
     pub fn supplied(&mut self, by: Nation, share: f32) {
-        let gain = SUPPLY_FAVOUR * share;
-        for nation in NATIONS {
+        let gain = supply_favour(share);
+        for nation in nations() {
             self.change(nation, if nation == by { gain } else { -gain / 2.0 });
         }
     }
@@ -122,8 +122,7 @@ impl Favour {
     /// The nation a restless port held by `owner` would go over to: the
     /// one it favours most, if more than its owner.
     pub fn pretender(&self, owner: Nation) -> Option<Nation> {
-        NATIONS
-            .into_iter()
+        nations()
             .filter(|&nation| nation != owner && self.of(nation) > self.of(owner))
             .max_by(|&a, &b| self.of(a).total_cmp(&self.of(b)))
             .filter(|_| self.restless(owner))
@@ -134,6 +133,11 @@ impl Favour {
         self.set(to, self.of(to).max(NEW_OWNER));
         self.set(from, self.of(from).min(OLD_OWNER));
     }
+}
+
+/// The favour won by filling `share` of a port's shortage of one good.
+fn supply_favour(share: f32) -> f32 {
+    SUPPLY_FAVOUR * share
 }
 
 /// The fraction of a port's needs running short.
@@ -151,14 +155,66 @@ pub fn neglect(market: &Market) -> f32 {
 
 /// A port's garrison, from 0 (none) to 1 (at full strength or more).
 pub fn garrison(goods: &Goods, market: &Market) -> f32 {
-    market.entry(goods.soldiers).map_or(NO_GARRISON, |entry| {
-        (entry.stock / entry.target).min(1.0) as f32
-    })
+    market
+        .entry(goods.soldiers)
+        .map_or(NO_GARRISON, |entry| manned(entry.stock, entry.target))
+}
+
+/// A garrison of `soldiers` against a `target`, from 0 to 1.
+fn manned(soldiers: f64, target: f64) -> f32 {
+    (soldiers / target).min(1.0) as f32
 }
 
 /// The daily chance a restless port rises, given its garrison.
 pub fn rising_per_day(garrison: f32) -> f32 {
     RISING_PER_DAY * (1.0 - garrison).max(0.0)
+}
+
+/// What hangs on a cargo reaching a port that needs it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stakes {
+    /// The share of the port's shortage it fills, as a fraction of target.
+    pub fills: f64,
+    /// The favour that wins there for the colours she flies.
+    pub favour: f32,
+    /// Whether the port is short of it now, so that while it goes without,
+    /// its owner goes on losing favour there.
+    pub short: bool,
+    /// Whether the port is restless now.
+    pub restless: bool,
+    /// For soldiers bound for a restless port: its chance a day of rising
+    /// now, and once they're landed.
+    pub rising: Option<(f32, f32)>,
+}
+
+/// What hangs on `quantity` of `good` reaching a port held by `owner`:
+/// nothing, if it isn't short of them.
+pub fn stakes(
+    goods: &Goods,
+    good: GoodId,
+    quantity: u32,
+    owner: Nation,
+    market: &Market,
+    favour: &Favour,
+) -> Option<Stakes> {
+    let entry = market.entry(good)?;
+    let fills = entry.gap_filled(quantity as f64);
+    if fills <= 0.0 {
+        return None;
+    }
+    let restless = favour.restless(owner);
+    let rising = (restless && good == goods.soldiers).then(|| {
+        let now = manned(entry.stock, entry.target);
+        let landed = manned(entry.stock + quantity as f64, entry.target);
+        (rising_per_day(now), rising_per_day(landed))
+    });
+    Some(Stakes {
+        fills,
+        favour: supply_favour(fills as f32),
+        short: shortfall(entry).is_some(),
+        restless,
+        rising,
+    })
 }
 
 pub struct AllegiancePlugin;
@@ -256,7 +312,11 @@ fn rise(
         deeds.write(Deed {
             doer,
             kind: DeedKind::RaisedPort,
-            nation: owner,
+            group: Group {
+                nation: owner,
+                kind: GroupKind::Governor,
+            },
+            about: None,
         });
         if let Ok(ship) = player.single() {
             alerts.write(Alert {
@@ -281,46 +341,94 @@ mod tests {
 
     #[test]
     fn a_neglected_port_turns_restless_and_a_cared_for_one_settles_back() {
-        let mut favour = Favour::held_by(Nation::England);
+        let mut favour = Favour::held_by(Nation::ENGLAND);
         for _ in 0..60 {
-            favour.settle(Nation::England, 1.0, 1.0);
+            favour.settle(Nation::ENGLAND, 1.0, 1.0);
         }
-        assert!(favour.restless(Nation::England), "{favour:?}");
+        assert!(favour.restless(Nation::ENGLAND), "{favour:?}");
         for _ in 0..60 {
-            favour.settle(Nation::England, 0.0, 1.0);
+            favour.settle(Nation::ENGLAND, 0.0, 1.0);
         }
-        assert!(!favour.restless(Nation::England), "{favour:?}");
-        let mut half = Favour::held_by(Nation::England);
+        assert!(!favour.restless(Nation::ENGLAND), "{favour:?}");
+        let mut half = Favour::held_by(Nation::ENGLAND);
         for _ in 0..200 {
-            half.settle(Nation::England, 0.4, 1.0);
+            half.settle(Nation::ENGLAND, 0.4, 1.0);
         }
         assert!(
-            !half.restless(Nation::England),
+            !half.restless(Nation::ENGLAND),
             "a port short of a few things grumbles but holds: {half:?}"
         );
     }
 
     #[test]
     fn supplying_a_port_wins_its_favour_at_the_others_expense() {
-        let mut favour = Favour::held_by(Nation::England);
-        favour.supplied(Nation::Pirates, 0.4);
-        assert_eq!(favour.of(Nation::Pirates), OTHER_REST + 10.0);
-        assert_eq!(favour.of(Nation::England), OWNER_REST - 5.0);
-        assert_eq!(favour.of(Nation::Spain), OTHER_REST - 5.0);
+        let mut favour = Favour::held_by(Nation::ENGLAND);
+        favour.supplied(Nation::PIRATES, 0.4);
+        assert_eq!(favour.of(Nation::PIRATES), OTHER_REST + 10.0);
+        assert_eq!(favour.of(Nation::ENGLAND), OWNER_REST - 5.0);
+        assert_eq!(favour.of(Nation::SPAIN), OTHER_REST - 5.0);
     }
 
     #[test]
     fn a_restless_port_would_go_over_to_the_nation_it_favours_more() {
-        let mut favour = Favour::held_by(Nation::England);
-        favour.set(Nation::Pirates, 40.0);
-        assert_eq!(favour.pretender(Nation::England), None, "not restless");
-        favour.set(Nation::England, 20.0);
-        assert_eq!(favour.pretender(Nation::England), Some(Nation::Pirates));
-        favour.set(Nation::Spain, 45.0);
-        assert_eq!(favour.pretender(Nation::England), Some(Nation::Spain));
-        favour.go_over(Nation::England, Nation::Spain);
-        assert!(!favour.restless(Nation::Spain));
-        assert!(favour.of(Nation::England) <= OLD_OWNER);
+        let mut favour = Favour::held_by(Nation::ENGLAND);
+        favour.set(Nation::PIRATES, 40.0);
+        assert_eq!(favour.pretender(Nation::ENGLAND), None, "not restless");
+        favour.set(Nation::ENGLAND, 20.0);
+        assert_eq!(favour.pretender(Nation::ENGLAND), Some(Nation::PIRATES));
+        favour.set(Nation::SPAIN, 45.0);
+        assert_eq!(favour.pretender(Nation::ENGLAND), Some(Nation::SPAIN));
+        favour.go_over(Nation::ENGLAND, Nation::SPAIN);
+        assert!(!favour.restless(Nation::SPAIN));
+        assert!(favour.of(Nation::ENGLAND) <= OLD_OWNER);
+    }
+
+    #[test]
+    fn whats_at_stake_is_what_delivery_would_really_do() {
+        let goods = Goods::standard();
+        let rum = goods.id("rum").unwrap();
+        let entry = |good, stock| MarketEntry {
+            good,
+            stock,
+            target: 40.0,
+            per_day: -1.0,
+        };
+        let market = Market {
+            entries: vec![entry(rum, 10.0), entry(goods.soldiers, 0.0)],
+        };
+        let mut favour = Favour::held_by(Nation::SPAIN);
+        let rum_stakes = stakes(&goods, rum, 20, Nation::SPAIN, &market, &favour).unwrap();
+        assert_eq!(rum_stakes.fills, 0.5);
+        let mut supplied = favour.clone();
+        supplied.supplied(Nation::ENGLAND, rum_stakes.fills as f32);
+        assert_eq!(
+            supplied.of(Nation::ENGLAND),
+            favour.of(Nation::ENGLAND) + rum_stakes.favour,
+            "the favour at stake is the favour delivery wins"
+        );
+        assert!(rum_stakes.short && rum_stakes.rising.is_none());
+
+        favour.set(Nation::SPAIN, 10.0);
+        let soldiers = stakes(&goods, goods.soldiers, 40, Nation::SPAIN, &market, &favour);
+        let (now, landed) = soldiers.unwrap().rising.unwrap();
+        assert_eq!((now, landed), (rising_per_day(0.0), 0.0));
+
+        let full = Market {
+            entries: vec![entry(rum, 40.0)],
+        };
+        assert_eq!(stakes(&goods, rum, 20, Nation::SPAIN, &full, &favour), None);
+        assert_eq!(
+            stakes(
+                &goods,
+                goods.provisions,
+                20,
+                Nation::SPAIN,
+                &market,
+                &favour
+            ),
+            None,
+            "it doesn't deal in them"
+        );
     }
 
     #[test]
@@ -336,14 +444,14 @@ mod tests {
             .resource_mut::<Time<Fixed>>()
             .set_timestep_seconds(MAX_STEP);
         let goods = app.world().resource::<Goods>().clone();
-        let mut favour = Favour::held_by(Nation::England);
-        favour.set(Nation::England, 10.0);
-        favour.set(Nation::Pirates, 40.0);
+        let mut favour = Favour::held_by(Nation::ENGLAND);
+        favour.set(Nation::ENGLAND, 10.0);
+        favour.set(Nation::PIRATES, 40.0);
         let port = app
             .world_mut()
             .spawn((
                 Port {
-                    flag: Nation::England,
+                    flag: Nation::ENGLAND,
                     town: Vec3::new(0.0, 0.0, 200.0),
                     locations: vec![Location::Market],
                 },
@@ -368,7 +476,7 @@ mod tests {
             .id();
         let pirate = app
             .world_mut()
-            .spawn((Colours(Nation::Pirates), Docked { port }))
+            .spawn((Colours(Nation::PIRATES), Docked { port }))
             .id();
         (port, pirate)
     }
@@ -378,11 +486,11 @@ mod tests {
         let mut app = sim_app();
         let (port, _) = restless_port(&mut app);
         let rose = run_until(&mut app, 30.0 * DAY as f32, |world| {
-            world.get::<Port>(port).unwrap().flag == Nation::Pirates
+            world.get::<Port>(port).unwrap().flag == Nation::PIRATES
         });
         assert!(rose, "never rose");
         let favour = app.world().get::<Favour>(port).unwrap();
-        assert!(!favour.restless(Nation::Pirates), "{favour:?}");
+        assert!(!favour.restless(Nation::PIRATES), "{favour:?}");
     }
 
     #[test]
@@ -391,11 +499,11 @@ mod tests {
         let (port, _) = restless_port(&mut app);
         app.world_mut().spawn((
             Patrol::bound_for(0),
-            Colours(Nation::England),
+            Colours(Nation::ENGLAND),
             Transform::from_xyz(100.0, 0.0, 0.0),
         ));
         let rose = run_until(&mut app, 30.0 * DAY as f32, |world| {
-            world.get::<Port>(port).unwrap().flag != Nation::England
+            world.get::<Port>(port).unwrap().flag != Nation::ENGLAND
         });
         assert!(!rose);
     }

@@ -60,6 +60,22 @@ impl Plugin for CameraPlugin {
     }
 }
 
+/// Clicking within this many pixels of a ship or a port picks it. Measured
+/// on screen, so things are as easy to click on the chart as close up.
+const CLICK_PIXELS: f32 = 24.0;
+
+/// Whether `point` in the world shows within a click of `cursor`.
+pub fn near_cursor(
+    camera: &Camera,
+    camera_transform: &GlobalTransform,
+    cursor: Vec2,
+    point: Vec3,
+) -> bool {
+    camera
+        .world_to_viewport(camera_transform, point)
+        .is_ok_and(|screen| screen.distance(cursor) <= CLICK_PIXELS)
+}
+
 /// The point on the ocean surface under the cursor, if any.
 pub fn cursor_to_ocean(
     window: &Window,

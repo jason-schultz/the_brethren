@@ -14,10 +14,12 @@ use bevy::ui_widgets::Activate;
 
 use super::panel::{Row, Style, screen};
 use crate::controls::{Bindings, Control, ControlUsed, Rebinding, Sheet, key_name};
-use crate::factions::{HoistColours, Nation};
+use crate::economy::jobs::Job;
+use crate::factions::{Group, HoistColours, Nation};
 use crate::officers::{OfficerAct, OfficerOrder};
 use crate::player::Player;
 use crate::schedule::FrameSet;
+use crate::service::Resign;
 use crate::visuals::portrait::PortraitCamera;
 
 /// Over the port screen, which may be open underneath.
@@ -44,6 +46,8 @@ enum SheetAction {
     ResetBindings,
     /// Fly this nation's colours.
     Hoist(Nation),
+    /// Leave this group.
+    Resign(Group),
 }
 
 pub(super) fn plugin(app: &mut App) {
@@ -64,7 +68,16 @@ pub(super) fn plugin(app: &mut App) {
                     .in_set(FrameSet::Input),
                 wake_portrait.run_if(resource_changed::<OpenSheet>),
             ),
-        );
+        )
+        .add_systems(PostStartup, open_letters);
+}
+
+/// A new captain finds her letters of introduction waiting on the captain
+/// sheet.
+fn open_letters(jobs: Query<&Job>, mut open: ResMut<OpenSheet>) {
+    if jobs.iter().any(|job| !job.for_anyone()) {
+        open.0 = Some(Sheet::Captain);
+    }
 }
 
 /// A run condition: whether `sheet` is open.
@@ -142,6 +155,7 @@ fn act(
     mut bindings: ResMut<Bindings>,
     mut orders: MessageWriter<OfficerOrder>,
     mut hoists: MessageWriter<HoistColours>,
+    mut resignations: MessageWriter<Resign>,
 ) {
     let Ok(&action) = actions.get(activate.entity) else {
         return;
@@ -161,6 +175,12 @@ fn act(
             hoists.write(HoistColours {
                 ship: *player,
                 nation,
+            });
+        }
+        SheetAction::Resign(group) => {
+            resignations.write(Resign {
+                captain: *player,
+                group,
             });
         }
     }

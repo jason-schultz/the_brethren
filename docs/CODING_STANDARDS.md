@@ -61,10 +61,14 @@ src/
     mod.rs         #   The domain's Plugin, components, messages, systems
     *.rs           #   Pure logic (physics, course, route) with unit tests
   <domain>.rs      # Small domains in one file: clock, goods, cargo, crew, port
+  chronicle/       # The log of a run and crash reports: reads the world, never writes it
+  bin/soak.rs      # The world running on its own, headless, for the chronicle
   visuals/         # 3D presentation: reads the simulation, never writes it
   ui/              # Screen UI: changes the simulation only by sending messages
+crates/chronicle/  # The log's record format, shared by the game and the report
+tools/report/      # `cargo logbook`: the logs served as web pages
 assets/maps/       # Map data (RON)
-assets/data/       # Other game data (RON): goods
+assets/data/       # Other game data (RON): goods, ships, factions, the opening world
 ```
 
 - **The simulation can run headless.** `SimulationPlugin` must work with

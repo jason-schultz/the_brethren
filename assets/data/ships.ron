@@ -1,0 +1,105 @@
+// Every class of ship, c. 1716.
+//
+// Speeds are with all sail set and the wind on the beam, in meters a second;
+// the headwind and tailwind factors scale that sailing straight into the
+// wind and dead before it. Turn rates are at full speed, degrees a second,
+// and acceleration is in meters a second squared.
+// `complement` is the hands she needs to work her (`min`), to fight her
+// guns too (`full`), and the most she can carry (`berths`). `stoutness` is
+// how much shot she takes, as a multiple of a sloop. Prices are what a new,
+// sound one costs, in pieces of eight. Length is how big she's drawn, in
+// meters.
+//
+// Saves and the factions' fleets name a class by its `name`.
+[
+    // The smugglers' and fishermen's favourite: fast and close-winded, but
+    // she carries little and fights little.
+    (
+        name: "Schooner",
+        rig: Schooner,
+        hull: (speed_mps: 6.0, headwind_factor: 0.8, tailwind_factor: 1.15, turn_degrees: 13.0, acceleration: 0.55),
+        complement: (min: 6, full: 30, berths: 60),
+        hold_tons: 30.0,
+        guns: 6,
+        stoutness: 0.8,
+        price: 2500,
+        length_m: 18.0,
+    ),
+    // A trading sloop of about 60 tons. Merchants sail her with a dozen
+    // men; pirates cram in six or seven times that to board their prizes.
+    (
+        name: "Sloop",
+        rig: Sloop,
+        hull: (speed_mps: 5.5, headwind_factor: 0.75, tailwind_factor: 1.2, turn_degrees: 12.0, acceleration: 0.5),
+        complement: (min: 8, full: 40, berths: 75),
+        hold_tons: 40.0,
+        guns: 8,
+        stoutness: 1.0,
+        price: 2000,
+        length_m: 20.0,
+    ),
+    // Square sails on the fore, fore-and-aft on the main: a handy ship of
+    // about 100 tons, and a pirate favourite.
+    (
+        name: "Brigantine",
+        rig: Brigantine,
+        hull: (speed_mps: 5.3, headwind_factor: 0.75, tailwind_factor: 1.2, turn_degrees: 10.0, acceleration: 0.45),
+        complement: (min: 12, full: 60, berths: 110),
+        hold_tons: 80.0,
+        guns: 12,
+        stoutness: 1.4,
+        price: 4500,
+        length_m: 25.0,
+    ),
+    // Square-rigged on both masts: what the navy buys for a cruiser.
+    (
+        name: "Brig",
+        rig: Brig,
+        hull: (speed_mps: 5.1, headwind_factor: 0.7, tailwind_factor: 1.25, turn_degrees: 9.0, acceleration: 0.4),
+        complement: (min: 16, full: 80, berths: 130),
+        hold_tons: 110.0,
+        guns: 14,
+        stoutness: 1.8,
+        price: 6500,
+        length_m: 28.0,
+    ),
+    // The Dutch-built carrier, round in the belly: six sloops' cargo, and
+    // no hope of running from anyone.
+    (
+        name: "Fluyt",
+        rig: Ship,
+        hull: (speed_mps: 4.4, headwind_factor: 0.7, tailwind_factor: 1.2, turn_degrees: 7.0, acceleration: 0.3),
+        complement: (min: 14, full: 50, berths: 90),
+        hold_tons: 250.0,
+        guns: 10,
+        stoutness: 2.0,
+        price: 7000,
+        length_m: 32.0,
+    ),
+    // A sixth rate of 24 guns: she outguns anything in these waters, and
+    // eats like a town.
+    (
+        name: "Frigate",
+        rig: Ship,
+        hull: (speed_mps: 5.4, headwind_factor: 0.7, tailwind_factor: 1.25, turn_degrees: 8.0, acceleration: 0.35),
+        complement: (min: 40, full: 160, berths: 220),
+        hold_tons: 120.0,
+        guns: 24,
+        stoutness: 3.0,
+        price: 18000,
+        length_m: 36.0,
+    ),
+    // A ship's boat under a lugsail: what a captain who has lost his ship
+    // is left with. Handy, but slow, and never sold.
+    (
+        name: "Longboat",
+        rig: Lugger,
+        hull: (speed_mps: 4.5, headwind_factor: 0.8, tailwind_factor: 1.15, turn_degrees: 20.0, acceleration: 0.8),
+        complement: (min: 2, full: 8, berths: 24),
+        hold_tons: 4.0,
+        guns: 0,
+        stoutness: 0.3,
+        price: 150,
+        length_m: 8.0,
+    ),
+]

@@ -118,11 +118,11 @@ fn build_stage(
     ));
     commands.spawn(captain(&mut meshes, &mut materials, &layer));
     commands.spawn((
-        StageShip(ShipClass::SLOOP),
+        StageShip(ShipClass::sloop()),
         Transform::from_translation(STAGE + SHIP_AT)
             .with_rotation(Quat::from_rotation_y(100_f32.to_radians())),
         Visibility::default(),
-        children![ship_model(&ships, &ShipClass::SLOOP, layer)],
+        children![ship_model(&ships, &ShipClass::sloop(), layer)],
     ));
 }
 

@@ -16,8 +16,8 @@ use std::f32::consts::FRAC_PI_2;
 use bevy::prelude::*;
 
 use crate::alert::{Alert, AlertKind};
-use crate::crew::{Complement, Crew};
-use crate::factions::{Colours, Deed, DeedKind};
+use crate::crew::Crew;
+use crate::factions::{Colours, Deed, DeedKind, Serves};
 use crate::map::Land;
 use crate::math::{heading_to_direction, normalize_heading};
 use crate::navigation::Route;
@@ -27,7 +27,9 @@ use crate::port::Docked;
 use crate::sailing::physics::sail_speed;
 use crate::sailing::{Heading, Helm, Hull, Laden, Rigging, SailHandling, Sails};
 use crate::schedule::{FrameSet, SimSet};
+use crate::ship_class::ShipClass;
 use crate::wind::Wind;
+use crate::wrecks::{Cause, Founder};
 use gunnery::{Broadside, Damage, GUN_RANGE, RELOAD, bearing_broadside, damage, hits};
 use rounds::{Dice, Fighter, Move, Range, Round};
 use tactics::{BOARDING_RANGE, LIE_ALONGSIDE, Strength, Tactic, course, defend};
@@ -130,7 +132,9 @@ pub struct Engaged {
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Struck;
 
-/// The player's ship has gone down. Kept in the world so the game can say so.
+/// She has gone down. The player's ship is kept in the world so the game
+/// can say so; any other is gone once she's founded (see
+/// [`crate::wrecks`]).
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Sunk;
 
@@ -217,7 +221,7 @@ impl Plugin for CombatPlugin {
 fn engage(
     mut orders: MessageReader<EngageOrder>,
     targets: Query<
-        Option<&Colours>,
+        (Option<&Colours>, Option<&Serves>),
         (
             With<Battery>,
             Without<Docked>,
@@ -229,18 +233,20 @@ fn engage(
     mut commands: Commands,
 ) {
     for order in orders.read() {
-        let Ok(colours) = targets.get(order.target) else {
+        let Ok((colours, serves)) = targets.get(order.target) else {
             continue;
         };
         if order.ship == order.target {
             continue;
         }
-        if let Some(&Colours(nation)) = colours {
-            deeds.write(Deed {
-                doer: order.ship,
-                kind: DeedKind::Attacked,
-                nation,
-            });
+        if let Some(deed) = Deed::to_ship(
+            order.ship,
+            DeedKind::Attacked,
+            order.target,
+            colours,
+            serves,
+        ) {
+            deeds.write(deed);
         }
         // Dropping her route hands the helm to her tactic.
         commands
@@ -322,16 +328,17 @@ fn rehoist_colours(
 }
 
 fn strength(
+    class: &ShipClass,
     battery: &Battery,
     crew: &Crew,
-    complement: &Complement,
     timbers: f32,
     rigging: f32,
 ) -> Strength {
     Strength {
         guns_per_side: battery.per_side(),
         crew: crew.count,
-        min_crew: complement.min,
+        min_crew: class.complement.min,
+        stoutness: class.stoutness,
         timbers,
         rigging,
     }
@@ -344,9 +351,9 @@ fn steer(
             &Engaged,
             &Transform,
             &Heading,
+            &ShipClass,
             &Battery,
             &Crew,
-            &Complement,
             &Timbers,
             &Rigging,
             &mut Helm,
@@ -356,9 +363,9 @@ fn steer(
     enemies: Query<(
         &Transform,
         &Heading,
+        &ShipClass,
         &Battery,
         &Crew,
-        &Complement,
         &Timbers,
         &Rigging,
         Has<Struck>,
@@ -366,15 +373,15 @@ fn steer(
     wind: Res<Wind>,
     land: Res<Land>,
 ) {
-    for (engaged, transform, heading, battery, crew, complement, timbers, rigging, mut helm) in
+    for (engaged, transform, heading, class, battery, crew, timbers, rigging, mut helm) in
         &mut ships
     {
         let Ok((
             enemy_at,
             enemy_heading,
+            enemy_class,
             enemy_battery,
             enemy_crew,
-            enemy_complement,
             enemy_timbers,
             enemy_rigging,
             enemy_struck,
@@ -388,11 +395,11 @@ fn steer(
             Tactic::Pursue
         } else {
             defend(
-                &strength(battery, crew, complement, timbers.0, rigging.0),
+                &strength(class, battery, crew, timbers.0, rigging.0),
                 &strength(
+                    enemy_class,
                     enemy_battery,
                     enemy_crew,
-                    enemy_complement,
                     enemy_timbers.0,
                     enemy_rigging.0,
                 ),
@@ -439,7 +446,13 @@ fn fire(
         Without<Struck>,
     >,
     targets: Query<&Transform, Without<Struck>>,
-    mut hulls: Query<(&mut Timbers, &mut Rigging, &mut Crew, Option<&Afterguard>)>,
+    mut hulls: Query<(
+        &ShipClass,
+        &mut Timbers,
+        &mut Rigging,
+        &mut Crew,
+        Option<&Afterguard>,
+    )>,
     mut volleys: MessageWriter<Volley>,
 ) {
     let dt = time.delta_secs();
@@ -467,9 +480,11 @@ fn fire(
         if !ordered || distance > GUN_RANGE || battery.reload(side) > 0.0 || battery.guns == 0 {
             continue;
         }
-        let reload = hulls.get(ship).map_or(RELOAD, |(_, _, crew, afterguard)| {
-            RELOAD * afterguard.map_or(1.0, Afterguard::reload) / crew.spirits().work_rate()
-        });
+        let reload = hulls
+            .get(ship)
+            .map_or(RELOAD, |(_, _, _, crew, afterguard)| {
+                RELOAD * afterguard.map_or(1.0, Afterguard::reload) / crew.spirits().work_rate()
+            });
         *battery.reload_mut(side) = reload;
         volleys.write(Volley {
             from: transform.translation,
@@ -478,7 +493,8 @@ fn fire(
         shots.push((engaged.enemy, damage(hits(battery.per_side(), distance))));
     }
     for (target, hit) in shots {
-        if let Ok((mut timbers, mut rigging, mut crew, afterguard)) = hulls.get_mut(target) {
+        if let Ok((class, mut timbers, mut rigging, mut crew, afterguard)) = hulls.get_mut(target) {
+            let hit = hit.against(class.stoutness);
             suffer(hit, afterguard, &mut timbers, &mut rigging, &mut crew);
         }
     }
@@ -500,11 +516,11 @@ fn suffer(
 /// A ship as a round sees her: her strength, and her best speed as she is.
 fn fighter(
     (hull, handling, laden): (&Hull, &SailHandling, &Laden),
-    (battery, complement): (&Battery, &Complement),
+    (battery, class): (&Battery, &ShipClass),
     (timbers, rigging, crew): (&Timbers, &Rigging, &Crew),
 ) -> Fighter {
     Fighter {
-        strength: strength(battery, crew, complement, timbers.0, rigging.0),
+        strength: strength(class, battery, crew, timbers.0, rigging.0),
         speed: sail_speed(hull.speed_mps, handling.0, rigging.0, laden.0),
     }
 }
@@ -523,7 +539,7 @@ fn play_rounds(
         &mut Transform,
         &mut Heading,
         (&Hull, &SailHandling, &Laden),
-        (&Battery, &Complement),
+        (&Battery, &ShipClass),
         (&mut Timbers, &mut Rigging, &mut Crew),
         Option<&Afterguard>,
     )>,
@@ -579,9 +595,11 @@ fn play_rounds(
             )
         };
         let (timbers, rigging, crew) = &mut our_hull;
-        suffer(round.taken, our_officers, timbers, rigging, crew);
+        let taken = round.taken.against(our_guns.1.stoutness);
+        suffer(taken, our_officers, timbers, rigging, crew);
         let (timbers, rigging, crew) = &mut their_hull;
-        suffer(round.dealt, their_officers, timbers, rigging, crew);
+        let dealt = round.dealt.against(their_guns.1.stoutness);
+        suffer(dealt, their_officers, timbers, rigging, crew);
         state.last = Some((order.play, round));
         match round.range {
             None => {
@@ -607,28 +625,26 @@ fn strike_or_sink(
     ships: Query<(
         Entity,
         &Engaged,
+        &ShipClass,
         &Battery,
         &Crew,
-        &Complement,
         &Timbers,
         &Rigging,
         Has<Player>,
-        Option<&Colours>,
+        (Option<&Colours>, Option<&Serves>),
     )>,
     mut helms: Query<&mut Helm>,
     mut alerts: MessageWriter<Alert>,
     mut deeds: MessageWriter<Deed>,
+    mut founders: MessageWriter<Founder>,
     mut commands: Commands,
 ) {
-    for (ship, engaged, battery, crew, complement, timbers, rigging, is_player, colours) in &ships {
+    for (ship, engaged, class, battery, crew, timbers, rigging, is_player, flag) in &ships {
         let foe = engaged.enemy;
         if timbers.0 <= 0.0 {
-            if let Some(&Colours(nation)) = colours {
-                deeds.write(Deed {
-                    doer: foe,
-                    kind: DeedKind::Sank,
-                    nation,
-                });
+            let (colours, serves) = flag;
+            if let Some(deed) = Deed::to_ship(foe, DeedKind::Sank, ship, colours, serves) {
+                deeds.write(deed);
             }
             alerts.write(Alert {
                 ship: foe,
@@ -647,9 +663,16 @@ fn strike_or_sink(
                     helm.sails = Sails::Furled;
                 }
             } else {
-                commands.entity(ship).despawn();
+                commands
+                    .entity(ship)
+                    .remove::<(Engaged, Route)>()
+                    .insert(Sunk);
+                founders.write(Founder {
+                    ship,
+                    cause: Cause::Battle(foe),
+                });
             }
-        } else if !is_player && strength(battery, crew, complement, timbers.0, rigging.0).beaten() {
+        } else if !is_player && strength(class, battery, crew, timbers.0, rigging.0).beaten() {
             alerts.write(Alert {
                 ship: foe,
                 kind: AlertKind::EnemyStruck { other: ship },
@@ -688,7 +711,7 @@ mod tests {
     /// hold `laden` full of rum.
     fn sloop(app: &mut App, at: Vec3, heading: f32, crew: u32, guns: u32, laden: f64) -> Entity {
         let goods = app.world().resource::<Goods>().clone();
-        let class = ShipClass::SLOOP;
+        let class = ShipClass::sloop();
         let mut hold: Hold = class.empty_hold();
         hold.owned
             .add(goods.id("rum").unwrap(), class.hold_tons * laden);

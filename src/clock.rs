@@ -44,6 +44,19 @@ impl WorldClock {
     pub fn date(&self) -> GameDate {
         GameDate::at(self.elapsed)
     }
+
+    /// How many new days began in the last `step` seconds: one every
+    /// [`DAY`] since the game opened, at eight in the morning.
+    pub fn days_begun(&self, step: f64) -> u32 {
+        self.periods_begun(step, DAY)
+    }
+
+    /// How many new periods of `period` seconds, counted from the game's
+    /// opening, began in the last `step` seconds.
+    pub fn periods_begun(&self, step: f64, period: f64) -> u32 {
+        let periods = |at: f64| (at / period).floor().max(0.0) as u32;
+        periods(self.elapsed) - periods(self.elapsed - step)
+    }
 }
 
 /// A calendar date and time of day.
@@ -90,14 +103,24 @@ impl GameDate {
     }
 }
 
+impl GameDate {
+    /// The day without the time: "1 June 1716".
+    pub fn day_name(&self) -> String {
+        format!(
+            "{} {} {}",
+            self.day,
+            MONTHS[self.month as usize - 1],
+            self.year
+        )
+    }
+}
+
 impl fmt::Display for GameDate {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "{} {} {}, {:02}:{:02}",
-            self.day,
-            MONTHS[self.month as usize - 1],
-            self.year,
+            "{}, {:02}:{:02}",
+            self.day_name(),
             self.hour,
             self.minute
         )
@@ -146,6 +169,15 @@ mod tests {
     fn the_game_opens_on_the_morning_of_the_first_of_june_1716() {
         assert_eq!(GameDate::at(0.0), date(1716, 6, 1, 8, 0));
         assert_eq!(GameDate::at(0.0).to_string(), "1 June 1716, 08:00");
+        assert_eq!(GameDate::at(0.0).day_name(), "1 June 1716");
+        let clock = WorldClock {
+            elapsed: 2.0 * DAY + 10.0,
+        };
+        assert_eq!(clock.days_begun(20.0), 1);
+        assert_eq!(clock.days_begun(5.0), 0);
+        assert_eq!(clock.days_begun(3.0 * DAY), 2, "none before the game");
+        assert_eq!(clock.periods_begun(20.0, HOUR), 1);
+        assert_eq!(clock.periods_begun(2.0 * HOUR, HOUR), 2);
     }
 
     #[test]

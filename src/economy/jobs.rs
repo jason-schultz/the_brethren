@@ -14,11 +14,12 @@ use crate::alert::{Alert, AlertKind, fell_below};
 use crate::cargo::{Hold, Purse};
 use crate::clock::{DAY, WorldClock};
 use crate::crew::{Complement, Crew};
-use crate::factions::{Deed, DeedKind, Relations};
+use crate::factions::{Deed, DeedKind, Group, GroupKind, Nation, Relations};
 use crate::goods::{Carriage, GoodId, Goods};
 use crate::map::Land;
 use crate::navigation::route::{NavGraph, route_length};
-use crate::port::{Docked, Location, Port};
+use crate::port::{Docked, Location, Port, office};
+use crate::service::{Service, contract_bonus};
 
 /// A needed good whose stock falls below this fraction of target gets a job posted.
 pub const JOB_THRESHOLD: f64 = 0.5;
@@ -42,6 +43,38 @@ pub struct Job {
     pub payment: u32,
     /// [`WorldClock`] time by which the job should be delivered.
     pub deadline: f64,
+    /// A group's errand for a new captain, to introduce her: only the
+    /// player can take it.
+    pub introduction: Option<Group>,
+}
+
+impl Job {
+    /// Whether any captain may take it, rather than only the player.
+    pub fn for_anyone(&self) -> bool {
+        self.introduction.is_none()
+    }
+
+    /// Whose business it is: the group it introduces her to, or else the
+    /// group of the port in need, flying `flag`, that deals in its goods.
+    pub fn group(&self, goods: &Goods, flag: Nation) -> Group {
+        self.introduction.unwrap_or(Group {
+            nation: flag,
+            kind: GroupKind::for_carriage(goods.carriage(self.good)),
+        })
+    }
+
+    /// Where in `origin`, the port it's offered at, the job is offered: at
+    /// its office, or the tavern for a foreign group's errand.
+    pub fn office(&self, goods: &Goods, origin: &Port) -> Option<Location> {
+        match self.introduction {
+            Some(group) if group.nation == origin.flag => office(&origin.locations, group.kind),
+            Some(_) => origin
+                .locations
+                .contains(&Location::Tavern)
+                .then_some(Location::Tavern),
+            None => job_office(&origin.locations, goods.carriage(self.good)),
+        }
+    }
 }
 
 /// The ship that accepted a job.
@@ -86,17 +119,10 @@ pub fn pay_on_delivery(job: &Job, now: f64) -> u32 {
     }
 }
 
-/// Where in a town jobs for goods of `carriage` are offered. Soldiers are
-/// the governor's business and freight the merchants'. Ports without the
-/// right office do business in the tavern.
+/// Where in a town jobs for goods of `carriage` are offered: at the office
+/// of the group whose business they are.
 pub fn job_office(locations: &[Location], carriage: Carriage) -> Option<Location> {
-    let office = match carriage {
-        Carriage::Hold => Location::MerchantsExchange,
-        Carriage::Berths => Location::GovernorsHouse,
-    };
-    [office, Location::Tavern]
-        .into_iter()
-        .find(|location| locations.contains(location))
+    office(locations, GroupKind::for_carriage(carriage))
 }
 
 /// Whether a ship docked at `port` can take on `job`. Both the port screen
@@ -149,10 +175,9 @@ pub(super) fn post_jobs(
             let Some(quantity) = shortfall(entry) else {
                 continue;
             };
-            if jobs
-                .iter()
-                .any(|job| job.destination == destination && job.good == entry.good)
-            {
+            if jobs.iter().any(|job| {
+                job.for_anyone() && job.destination == destination && job.good == entry.good
+            }) {
                 continue;
             }
             let carriage = goods.carriage(entry.good);
@@ -179,6 +204,7 @@ pub(super) fn post_jobs(
                     destination,
                     payment: payment(carriage, quantity, distance),
                     deadline: deadline(clock.elapsed, distance),
+                    introduction: None,
                 });
             }
         }
@@ -255,18 +281,20 @@ pub(super) fn warn_of_deadlines(
     }
 }
 
-/// A carrier docked at a job's destination hands over the consignment and is paid.
+/// A carrier docked at a job's destination hands over the consignment and
+/// is paid, more if she's one of the merchants' own.
 pub(super) fn deliver_jobs(
     clock: Res<WorldClock>,
+    goods: Res<Goods>,
     jobs: Query<(Entity, &Job, &Carrier)>,
-    mut ships: Query<(&Docked, &mut Hold, &mut Purse)>,
+    mut ships: Query<(&Docked, &mut Hold, &mut Purse, Option<&Service>)>,
     mut markets: Query<(&mut Market, &Port)>,
     mut deeds: MessageWriter<Deed>,
     mut supplies: MessageWriter<Supplied>,
     mut commands: Commands,
 ) {
     for (entity, job, carrier) in &jobs {
-        let Ok((docked, mut hold, mut purse)) = ships.get_mut(carrier.0) else {
+        let Ok((docked, mut hold, mut purse, service)) = ships.get_mut(carrier.0) else {
             continue;
         };
         let quantity = job.quantity as f64;
@@ -276,10 +304,17 @@ pub(super) fn deliver_jobs(
         let Ok((mut market, port)) = markets.get_mut(job.destination) else {
             continue;
         };
+        let group = job.group(&goods, port.flag);
+        let kind = if job.for_anyone() {
+            DeedKind::Delivered
+        } else {
+            DeedKind::Introduced
+        };
         deeds.write(Deed {
             doer: carrier.0,
-            kind: DeedKind::Delivered,
-            nation: port.flag,
+            kind,
+            group,
+            about: None,
         });
         hold.consigned.remove(job.good, quantity);
         if let Some(entry) = market.entry_mut(job.good) {
@@ -290,7 +325,9 @@ pub(super) fn deliver_jobs(
             });
             entry.stock += quantity;
         }
-        purse.0 += pay_on_delivery(job, clock.elapsed);
+        let bonus = service.map_or(0.0, |service| contract_bonus(service, group));
+        let pay = pay_on_delivery(job, clock.elapsed) as f64 * (1.0 + bonus);
+        purse.0 += pay.round() as u32;
         commands.entity(entity).despawn();
     }
 }
@@ -351,6 +388,7 @@ mod tests {
             destination: Entity::PLACEHOLDER,
             payment: 100,
             deadline: 1_000.0,
+            introduction: None,
         };
         assert_eq!(pay_on_delivery(&job, 1_000.0), 100);
         assert_eq!(pay_on_delivery(&job, 1_001.0), 50);
@@ -371,6 +409,35 @@ mod tests {
         assert_eq!(job_office(&[Market], Carriage::Berths), None);
     }
 
+    #[test]
+    fn a_foreign_groups_errand_is_offered_in_the_tavern() {
+        use Location::*;
+        let goods = Goods::standard();
+        let kingston = Port {
+            flag: Nation::ENGLAND,
+            town: Vec3::ZERO,
+            locations: vec![Tavern, Market, MerchantsExchange],
+        };
+        let errand = |nation, kind| Job {
+            good: goods.id("munitions").unwrap(),
+            quantity: 8,
+            origin: Entity::PLACEHOLDER,
+            destination: Entity::PLACEHOLDER,
+            payment: 10,
+            deadline: DAY,
+            introduction: Some(Group { nation, kind }),
+        };
+        let flying_gang = errand(Nation::PIRATES, GroupKind::Navy);
+        assert_eq!(flying_gang.office(&goods, &kingston), Some(Tavern));
+        assert!(!flying_gang.for_anyone());
+        assert_eq!(
+            flying_gang.group(&goods, Nation::ENGLAND).nation,
+            Nation::PIRATES
+        );
+        let merchants = errand(Nation::ENGLAND, GroupKind::Merchants);
+        assert_eq!(merchants.office(&goods, &kingston), Some(MerchantsExchange));
+    }
+
     struct Harbour {
         app: App,
         goods: Goods,
@@ -385,7 +452,7 @@ mod tests {
         let goods = app.world().resource::<Goods>().clone();
         let rum = goods.id("rum").unwrap();
         let port = |locations| Port {
-            flag: crate::factions::Nation::England,
+            flag: crate::factions::Nation::ENGLAND,
             town: Vec3::ZERO,
             locations,
         };
@@ -522,6 +589,7 @@ mod tests {
                     destination: h.consumer,
                     payment: 10,
                     deadline: DAY + 30.0,
+                    introduction: None,
                 },
                 Carrier(ship),
             ))
@@ -550,6 +618,7 @@ mod tests {
             destination: h.consumer,
             payment: 10,
             deadline: 0.0,
+            introduction: None,
         };
         let market = Market {
             entries: vec![produced(h.rum, 100.0)],

@@ -1,10 +1,14 @@
-//! Pirate raiders: NPC sloops of the Brethren that lie in wait on the trade
+//! Pirate raiders: NPC sloops of the lawless nations' navies (the Brethren's,
+//! in the factions data) that lie in wait on the trade
 //! lanes, take the shipping of nations hostile to them, and sell their
 //! plunder at the nearest port that will have them.
 //!
 //! A port a raider supplies this way warms to the Brethren, and the cargo
 //! she took never reaches the port it was bound for. That's the reason
-//! for piracy, and how the Brethren win ports without the player.
+//! for piracy, and how the Brethren win ports without the player. Word
+//! gets about when she puts to sea ([`Sailed`]). A wreck talked of in her
+//! port draws her before any lane: she lies over it, diving, and preys on
+//! whoever else comes.
 
 use bevy::math::FloatOrd;
 use bevy::prelude::*;
@@ -16,8 +20,8 @@ use crate::clock::{DAY, HOUR, WorldClock};
 use crate::combat::rounds::Dice;
 use crate::combat::{EngageOrder, Engaged, Struck};
 use crate::crew::Crew;
-use crate::economy::market::{Market, Side, Trade};
-use crate::factions::{Colours, Nation, Relations};
+use crate::economy::market::{Market, Side, Trade, sell_cargo};
+use crate::factions::{Colours, GroupKind, Nation, Relations, Serves};
 use crate::goods::Goods;
 use crate::hunting::{Hunter, Pursuit, Sea, pursue};
 use crate::map::Land;
@@ -25,16 +29,15 @@ use crate::merchants::{harbours, provisions_needed};
 use crate::navigation::route::{NavGraph, point_along, route_length};
 use crate::navigation::{Arrival, Route, SailOrder};
 use crate::port::{CastOff, Docked, Port, welcomes};
-use crate::roster::Roster;
+use crate::roster::{Listed, Roster};
 use crate::schedule::SimSet;
 use crate::ship_class::ShipClass;
+use crate::word::{Ledger, Purpose, Sailed};
+use crate::wrecks::{Wreck, wrecks_known_at};
 
-/// Hornigold's, Teach's, and Bonnet's sloops.
-const NAMES: [&str; 3] = ["Ranger", "Adventure", "Revenge"];
-const NATION: Nation = Nation::Pirates;
-/// A crew to fight with and spare men for boarding.
-const CREW: u32 = 30;
-const GUNS: u32 = ShipClass::SLOOP.guns;
+/// A raider ships this share of a full fighting crew: enough to fight,
+/// with men to spare for boarding.
+const MANNED: f64 = 0.75;
 const PURSE: u32 = 50;
 /// How long a raider carouses in port between cruises.
 const IN_PORT: f64 = DAY;
@@ -50,8 +53,10 @@ const REPLACEMENT: f64 = 3.0 * DAY;
 /// harbour between two ports in sight of each other.
 const SHORTEST_LANE: f32 = 30_000.0;
 
-/// A pirate captain, and what she means to do next.
+/// A pirate captain, and what she means to do next. The Brethren's
+/// raiders are their navy.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
+#[require(Serves(GroupKind::Navy))]
 pub struct Raider {
     pub plan: Raid,
 }
@@ -73,8 +78,18 @@ pub enum Raid {
 struct Brethren(Roster);
 
 impl Default for Brethren {
+    /// Every lawless nation's navy, from the factions data.
     fn default() -> Self {
-        Self(Roster::new(&NAMES, REPLACEMENT))
+        Self(Roster::of_fleets(
+            |nation| {
+                if nation.is_crown() {
+                    &[]
+                } else {
+                    &nation.fleet().navy
+                }
+            },
+            REPLACEMENT,
+        ))
     }
 }
 
@@ -87,47 +102,51 @@ impl Plugin for RaidersPlugin {
     }
 }
 
-/// A raider called `name`, lying at `port` until `until`.
-fn raider(goods: &Goods, name: &str, port: Entity, at: Vec3, until: f64) -> impl Bundle {
-    let class = ShipClass::SLOOP;
+/// A raider from the roster, lying at `port` until `until`, with every gun
+/// mounted.
+fn raider(goods: &Goods, listed: Listed, port: Entity, at: Vec3, until: f64) -> impl Bundle {
+    let class = listed.class;
+    let crew = (class.complement.full as f64 * MANNED).round() as u32;
     let mut hold = class.empty_hold();
     hold.owned
-        .add(goods.provisions, provisions_needed(CREW as f64, 0.0));
+        .add(goods.provisions, provisions_needed(crew as f64, 0.0));
     (
-        Name::new(name.to_string()),
+        Name::new(listed.name),
         Raider {
             plan: Raid::InPort { until },
         },
-        class.build(CREW, GUNS, hold),
+        class.build(crew, class.guns, hold),
         Purse(PURSE),
-        Colours(NATION),
+        Colours(listed.nation),
         Transform::from_translation(at),
         Docked { port },
     )
 }
 
-/// The Brethren's ports, in a stable order: where raiders are fitted out.
-fn havens(ports: &Query<(Entity, &Port, &Transform)>) -> Vec<(Entity, Vec3)> {
+/// `nation`'s ports, in a stable order: where her raiders are fitted out.
+fn havens(ports: &Query<(Entity, &Port, &Transform)>, nation: Nation) -> Vec<(Entity, Vec3)> {
     harbours(ports)
         .into_iter()
-        .filter(|&(_, flag, _)| flag == NATION)
+        .filter(|&(_, flag, _)| flag == nation)
         .map(|(port, _, anchorage)| (port, anchorage))
         .collect()
 }
 
-/// The raiders at the start of a game, in the Brethren's ports.
+/// The raiders at the start of a game, in their nations' ports.
 pub fn raiding_party(
     goods: &Goods,
     ports: &Query<(Entity, &Port, &Transform)>,
 ) -> Vec<impl Bundle> {
-    let havens = havens(ports);
-    NAMES
-        .iter()
+    Brethren::default()
+        .0
+        .ships
+        .into_iter()
         .enumerate()
-        .filter_map(|(i, name)| {
+        .filter_map(|(i, listed)| {
+            let havens = havens(ports, listed.nation);
             let (port, anchorage) = *havens.get(i % havens.len().max(1))?;
             let until = OPENING_STAGGER * (i + 1) as f64;
-            Some(raider(goods, name, port, anchorage, until))
+            Some(raider(goods, listed, port, anchorage, until))
         })
         .collect()
 }
@@ -141,12 +160,13 @@ fn recruit_raiders(
     mut commands: Commands,
 ) {
     let now = clock.elapsed;
-    let Some((index, name)) = brethren.0.due(ships.iter(), now) else {
+    let Some((index, listed)) = brethren.0.due(ships.iter(), now) else {
         return;
     };
-    let havens = havens(&ports);
+    let havens = havens(&ports, listed.nation);
     if let Some(&(port, anchorage)) = havens.get(index % havens.len().max(1)) {
-        commands.spawn(raider(&goods, name, port, anchorage, now + IN_PORT));
+        let until = now + IN_PORT;
+        commands.spawn(raider(&goods, listed, port, anchorage, until));
     }
 }
 
@@ -200,7 +220,8 @@ fn raid(
     mut engagements: MessageWriter<EngageOrder>,
     mut cast_offs: MessageWriter<CastOff>,
     mut orders: MessageWriter<SailOrder>,
-    mut trades: MessageWriter<Trade>,
+    (mut trades, mut sailings): (MessageWriter<Trade>, MessageWriter<Sailed>),
+    (ledger, wrecks): (Res<Ledger>, Query<(Entity, &Transform, &Wreck)>),
 ) {
     let now = clock.elapsed;
     let anchorages: Vec<Vec3> = harbours(&ports)
@@ -211,13 +232,23 @@ fn raid(
         if let Some(&Docked { port }) = docked {
             raider.plan = match raider.plan {
                 Raid::InPort { until } if now >= until => {
-                    match lying_in_wait(&land, &graph, &anchorages, dice.roll()) {
+                    // A wreck talked of in port is easier pickings than a
+                    // lane.
+                    let wreck = wrecks_known_at(&ledger, port, at.translation, &wrecks)
+                        .first()
+                        .map(|&(_, lies)| lies);
+                    match wreck.or_else(|| lying_in_wait(&land, &graph, &anchorages, dice.roll())) {
                         Some(ground) => {
                             cast_offs.write(CastOff { ship });
                             orders.write(SailOrder {
                                 ship,
                                 destination: ground,
                                 on_arrival: Arrival::HeaveTo,
+                            });
+                            sailings.write(Sailed {
+                                ship,
+                                from: port,
+                                purpose: Purpose::Cruising,
                             });
                             Raid::Weighing {
                                 until: now + CRUISE,
@@ -231,16 +262,7 @@ fn raid(
                     // In from a cruise: sell what the market deals in, and
                     // victual for the next.
                     if let Ok(market) = markets.get(port) {
-                        for (good, tons) in hold.owned.iter() {
-                            if good != goods.provisions && market.entry(good).is_some() {
-                                trades.write(Trade {
-                                    ship,
-                                    good,
-                                    quantity: tons.floor() as u32,
-                                    side: Side::Sell,
-                                });
-                            }
-                        }
+                        trades.write_batch(sell_cargo(&goods, ship, hold, market));
                     }
                     let tons =
                         provisions_needed(crew.count as f64, hold.owned.get(goods.provisions));
@@ -349,7 +371,7 @@ mod tests {
                 .iter(app.world())
                 .count()
         };
-        assert_eq!(raiders(&mut app), NAMES.len());
+        assert_eq!(raiders(&mut app), Brethren::default().0.ships.len());
         let merchants = |world: &World| {
             world
                 .iter_entities()

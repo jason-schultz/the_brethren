@@ -215,6 +215,23 @@ pub fn quote(
     }
 }
 
+/// Orders selling everything `ship` owns that `market` deals in, but her
+/// provisions: what a captain does with plunder or salvage in port.
+pub fn sell_cargo(goods: &Goods, ship: Entity, hold: &Hold, market: &Market) -> Vec<Trade> {
+    hold.owned
+        .iter()
+        .filter(|&(good, tons)| {
+            good != goods.provisions && tons >= 1.0 && market.entry(good).is_some()
+        })
+        .map(|(good, tons)| Trade {
+            ship,
+            good,
+            quantity: tons.floor() as u32,
+            side: Side::Sell,
+        })
+        .collect()
+}
+
 /// Production and consumption: every market's stock drifts each step.
 pub(super) fn drift_stock(time: Res<Time>, mut markets: Query<&mut Market>) {
     let days = time.delta_secs_f64() / DAY;
@@ -364,7 +381,7 @@ mod tests {
         };
         Fixture {
             port: Port {
-                flag: crate::factions::Nation::England,
+                flag: crate::factions::Nation::ENGLAND,
                 town: Vec3::ZERO,
                 locations: vec![Location::Market, Location::Tavern],
             },

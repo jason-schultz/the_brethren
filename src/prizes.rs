@@ -16,16 +16,17 @@ use crate::combat::tactics::BOARDING_RANGE;
 use crate::combat::{Engaged, Struck, Sunk};
 use crate::crew::{Complement, Crew, PRIZE_HANDS};
 use crate::economy::jobs::{Carrier, Job};
-use crate::factions::{Colours, Deed, DeedKind};
+use crate::factions::{Colours, Deed, DeedKind, Serves};
 use crate::goods::{Carriage, Goods};
 use crate::merchants::{Merchant, Plan};
-use crate::navigation::{Arrival, Route, SailOrder};
+use crate::navigation::{Arrival, Route, SailOrder, keep_company};
 use crate::officers::Afterguard;
 use crate::patrols::Patrol;
 use crate::player::Player;
 use crate::port::{CastOff, Docked, Port};
 use crate::sailing::{Helm, Sails};
 use crate::schedule::{FrameSet, SimSet};
+use crate::wrecks::{Cause, Founder};
 
 /// Defenders fight from behind their bulwarks: each counts for this many
 /// boarders.
@@ -35,10 +36,6 @@ const VICTORS_LOSS: f64 = 0.3;
 /// Fractions of the boarding party lost, and of it inflicted, when repulsed.
 const REPULSED_LOSS: f64 = 0.4;
 const REPULSE_TOLL: f64 = 0.2;
-/// A prize keeps within this distance of her captor, meters.
-const KEEP_UP: f32 = 250.0;
-/// A prize lies this far astern of her captor when she catches up, meters.
-const ASTERN: f32 = 120.0;
 
 /// A captured ship sailed by a prize crew, under her captor's orders.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,7 +188,7 @@ fn board(
             &mut Hold,
             &mut Purse,
             Has<Struck>,
-            Option<&Colours>,
+            (Option<&Colours>, Option<&Serves>),
             Option<&Afterguard>,
         ),
         Without<Sunk>,
@@ -200,6 +197,7 @@ fn board(
     players: Query<(), With<Player>>,
     mut alerts: MessageWriter<Alert>,
     mut deeds: MessageWriter<Deed>,
+    mut founders: MessageWriter<Founder>,
     mut commands: Commands,
 ) {
     // Several orders to board one ship can come in a frame, before the
@@ -233,7 +231,7 @@ fn board(
             mut prize_hold,
             mut prize_purse,
             struck,
-            colours,
+            (colours, serves),
             prize_officers,
         ) = prize;
         if captor_at.translation.distance(prize_at.translation) > BOARDING_RANGE {
@@ -256,12 +254,8 @@ fn board(
         }
 
         taken.push(enemy);
-        if let Some(&Colours(nation)) = colours {
-            deeds.write(Deed {
-                doer: order.ship,
-                kind: DeedKind::Captured,
-                nation,
-            });
+        if let Some(deed) = Deed::to_ship(order.ship, DeedKind::Captured, enemy, colours, serves) {
+            deeds.write(deed);
         }
         // Plunder: her purse, and what cargo fits.
         captor_purse.0 += std::mem::take(&mut prize_purse.0);
@@ -280,7 +274,10 @@ fn board(
 
         commands.entity(order.ship).remove::<Engaged>();
         if !players.contains(order.ship) {
-            commands.entity(enemy).despawn();
+            founders.write(Founder {
+                ship: enemy,
+                cause: Cause::Burned(order.ship),
+            });
             continue;
         }
         let hands = spare_hands(captor_crew.count, captor_complement.min, PRIZE_HANDS);
@@ -408,18 +405,16 @@ fn sail_prizes(
                 }
             }
             (None, _) => {
-                let behind = captor_at.translation
-                    + (transform.translation - captor_at.translation).normalize_or_zero() * ASTERN;
-                let drifting = route
-                    .and_then(|route| route.waypoints.back())
-                    .is_none_or(|end| end.distance(behind) > KEEP_UP / 2.0);
-                if transform.translation.distance(captor_at.translation) > KEEP_UP && drifting {
+                let heading_for = route.and_then(|route| route.waypoints.back().copied());
+                if let Some(astern) =
+                    keep_company(transform.translation, heading_for, captor_at.translation)
+                {
                     if docked.is_some() {
                         cast_offs.write(CastOff { ship: prize });
                     }
                     orders.write(SailOrder {
                         ship: prize,
-                        destination: behind,
+                        destination: astern,
                         on_arrival: Arrival::HeaveTo,
                     });
                 }
@@ -526,12 +521,12 @@ mod tests {
                 .set_timestep_seconds(MAX_STEP);
             let goods = app.world().resource::<Goods>().clone();
             let rum = goods.id("rum").unwrap();
-            let class = ShipClass::SLOOP;
+            let class = ShipClass::sloop();
             let port = app
                 .world_mut()
                 .spawn((
                     Port {
-                        flag: crate::factions::Nation::England,
+                        flag: crate::factions::Nation::ENGLAND,
                         town: Vec3::new(0.0, 0.0, 4000.0),
                         locations: vec![Location::Shipyard],
                     },
@@ -667,7 +662,10 @@ mod tests {
                 false
             });
             assert!(widest < 1000.0, "fell {widest:.0} m behind");
-            assert!(gap(app.world()) <= KEEP_UP, "never caught up once hove to");
+            assert!(
+                gap(app.world()) <= crate::navigation::KEEP_UP,
+                "never caught up once hove to"
+            );
         }
 
         #[test]

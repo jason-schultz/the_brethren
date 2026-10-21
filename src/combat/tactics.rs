@@ -37,6 +37,8 @@ pub struct Strength {
     pub crew: u32,
     /// Hands needed to work the ship.
     pub min_crew: u32,
+    /// How much shot she takes, as a multiple of a sloop.
+    pub stoutness: f32,
     pub timbers: f32,
     pub rigging: f32,
 }
@@ -45,7 +47,7 @@ impl Strength {
     /// A rough measure of how hard she hits and how long she lasts.
     pub fn power(&self) -> f32 {
         let manned = (self.crew as f32 / self.min_crew.max(1) as f32).min(1.5);
-        self.guns_per_side as f32 * self.timbers * manned
+        self.guns_per_side as f32 * self.timbers * self.stoutness * manned
     }
 
     /// Too battered to fight or run well.
@@ -158,6 +160,7 @@ mod tests {
             guns_per_side,
             crew,
             min_crew: 8,
+            stoutness: 1.0,
             timbers: 1.0,
             rigging: 1.0,
         }
@@ -169,6 +172,17 @@ mod tests {
         let raider = sloop(4, 40);
         assert_eq!(defend(&merchant, &raider), Tactic::Flee);
         assert_eq!(defend(&raider, &merchant), Tactic::Fight);
+    }
+
+    #[test]
+    fn a_stout_ship_stands_up_to_more_guns() {
+        let raider = sloop(4, 40);
+        let fluyt = Strength {
+            stoutness: 2.0,
+            ..sloop(3, 40)
+        };
+        assert_eq!(defend(&fluyt, &raider), Tactic::Fight);
+        assert_eq!(defend(&sloop(3, 40), &raider), Tactic::Flee);
     }
 
     #[test]

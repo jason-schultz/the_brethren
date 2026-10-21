@@ -9,8 +9,8 @@ use bevy::ui_widgets::{Activate, Button, observe};
 
 use super::button_style;
 
-const PARCHMENT: Color = Color::srgb(0.91, 0.85, 0.7);
-const INK: Color = Color::srgb(0.18, 0.12, 0.08);
+pub(super) const PARCHMENT: Color = Color::srgb(0.91, 0.85, 0.7);
+pub(super) const INK: Color = Color::srgb(0.18, 0.12, 0.08);
 const FADED_INK: Color = Color::srgb(0.45, 0.38, 0.3);
 /// Width of a row's first cell; later cells are narrower.
 const FIRST_CELL: f32 = 260.0;

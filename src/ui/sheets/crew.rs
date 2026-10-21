@@ -258,7 +258,7 @@ mod tests {
         };
         let (aboard, captive) = (officer(Role::Gunner), officer(Role::Gunner));
         let crew = Crew::new(12);
-        let complement = ShipClass::SLOOP.complement;
+        let complement = ShipClass::sloop().complement;
         let posts = [Role::Gunner];
         let view = View {
             crew: &crew,

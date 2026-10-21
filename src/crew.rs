@@ -212,7 +212,7 @@ pub struct ShoreLeave {
 }
 
 /// How many people a ship class needs and holds.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Complement {
     /// Hands needed to work the ship day to day.
     pub min: u32,
@@ -376,7 +376,7 @@ fn eat(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sailing::Hull;
+    use crate::ship_class::ShipClass;
     use crate::test_support::{run_seconds, sim_app};
 
     #[test]
@@ -446,7 +446,13 @@ mod tests {
         let other = Entity::PLACEHOLDER;
         assert!(morale_from(AlertKind::PrizeTaken { other }) > 0.0);
         assert!(morale_from(AlertKind::Repulsed { other }) < 0.0);
-        assert_eq!(morale_from(AlertKind::SailSighted { other }), 0.0);
+        assert_eq!(
+            morale_from(AlertKind::SailSighted {
+                other,
+                hostile: false
+            }),
+            0.0
+        );
     }
 
     /// A docked sloop with `crew` men at `morale`, at a port with a tavern.
@@ -456,7 +462,7 @@ mod tests {
         let port = app
             .world_mut()
             .spawn(Port {
-                flag: crate::factions::Nation::England,
+                flag: crate::factions::Nation::ENGLAND,
                 town: Vec3::ZERO,
                 locations: vec![Location::Tavern],
             })
@@ -538,7 +544,7 @@ mod tests {
         };
         let ship = app
             .world_mut()
-            .spawn((Hull::SLOOP, Crew::new(4), complement, hold))
+            .spawn((ShipClass::sloop().hull, Crew::new(4), complement, hold))
             .id();
         run_seconds(&mut app, 600.0);
 

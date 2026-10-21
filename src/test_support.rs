@@ -1,25 +1,9 @@
 //! Shared helpers for headless simulation tests.
 
-use std::time::Duration;
-
 use bevy::prelude::*;
-use bevy::time::TimeUpdateStrategy;
-
-use crate::SimulationPlugin;
-use crate::time_scale::MAX_STEP;
 
 /// A headless app running the simulation. Each `update()` advances exactly one fixed step.
-pub fn sim_app() -> App {
-    let mut app = App::new();
-    app.add_plugins((MinimalPlugins, SimulationPlugin))
-        .insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
-    // Virtual time normally clamps each frame to 250 ms, which would let a
-    // test with long fixed steps run only one step every few updates.
-    app.world_mut()
-        .resource_mut::<Time<Virtual>>()
-        .set_max_delta(Duration::from_secs_f64(MAX_STEP * 2.0));
-    app
-}
+pub use crate::stepped_app as sim_app;
 
 /// Advances the app by `seconds` of simulated time.
 pub fn run_seconds(app: &mut App, seconds: f32) {
