@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use chronicle::{Alarm, AlarmKind, Record};
 
@@ -66,8 +67,19 @@ impl Lasting {
     }
 }
 
+/// A ship as the alarms watch her: where she is, and whether she's going
+/// anywhere.
+#[derive(QueryData)]
+struct Watched {
+    entity: Entity,
+    name: &'static Name,
+    at: &'static Transform,
+    routed: Has<Route>,
+    docked: Has<Docked>,
+}
+
 fn watch(
-    ships: Query<(Entity, &Name, &Transform, Has<Route>, Has<Docked>), With<ShipClass>>,
+    ships: Query<Watched, With<ShipClass>>,
     ports: Query<(&Name, &Market)>,
     player: Query<&Standing, With<Player>>,
     relations: Res<Relations>,
@@ -88,7 +100,14 @@ fn watch(
         }
     };
     let mut today = HashMap::new();
-    for (ship, name, transform, routed, docked) in &ships {
+    for WatchedItem {
+        entity: ship,
+        name,
+        at: transform,
+        routed,
+        docked,
+    } in &ships
+    {
         let at = transform.translation;
         today.insert(ship, at);
         check(

@@ -6,6 +6,7 @@
 //! point under the cursor, so you zoom into wherever you are looking.
 //! Camera controls read the real clock, so they keep working while paused.
 
+use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -85,6 +86,34 @@ pub fn cursor_to_ocean(
     let cursor = window.cursor_position()?;
     let ray = camera.viewport_to_world(camera_transform, cursor).ok()?;
     ray.plane_intersection_point(Vec3::ZERO, InfinitePlane3d::new(Vec3::Y))
+}
+
+/// The mouse over the ocean, as the camera shows it: where on the ocean it
+/// points, and what it's near.
+#[derive(SystemParam)]
+pub struct Pointer<'w, 's> {
+    window: Single<'w, 's, &'static Window, With<PrimaryWindow>>,
+    camera: Single<'w, 's, (&'static Camera, &'static GlobalTransform), With<CameraRig>>,
+}
+
+impl Pointer<'_, '_> {
+    /// Where the cursor is on screen, if it's over the window.
+    pub fn cursor(&self) -> Option<Vec2> {
+        self.window.cursor_position()
+    }
+
+    /// The point on the ocean under the cursor, if any.
+    pub fn on_ocean(&self) -> Option<Vec3> {
+        let (camera, transform) = *self.camera;
+        cursor_to_ocean(&self.window, camera, transform)
+    }
+
+    /// Whether `point` in the world shows within a click of the cursor.
+    pub fn near(&self, point: Vec3) -> bool {
+        let (camera, transform) = *self.camera;
+        self.cursor()
+            .is_some_and(|cursor| near_cursor(camera, transform, cursor, point))
+    }
 }
 
 /// The new focus that keeps `point` under the cursor while the camera's

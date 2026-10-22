@@ -4,10 +4,11 @@
 //!
 //! Also the lookout, which raises an alert when another ship comes in sight.
 
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 
 use crate::factions::{
-    Colours, DeedKind, Group, GroupKind, Nation, Relations, Serves, Standing, Terms,
+    Colours, DeedKind, Flag, Group, GroupKind, Nation, Relations, Standing, Terms,
 };
 use crate::hunting::{Hunter, Mark, is_quarry};
 use crate::loyalty::Rumour;
@@ -192,31 +193,42 @@ impl Plugin for AlertPlugin {
     }
 }
 
+/// A ship keeping a lookout, and what she can tell of herself: whom a
+/// hunter in sight would take her for.
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct Lookout {
+    entity: Entity,
+    at: &'static Transform,
+    in_sight: &'static mut InSight,
+    colours: Option<&'static Colours>,
+    warship: Has<Patrol>,
+    standing: Option<&'static Standing>,
+}
+
+/// A ship under sail: one with a hull, out of port.
+type UnderSail = (With<Hull>, Without<Docked>);
+
 /// Updates who can see whom, and alerts on every ship newly in sight,
 /// saying whether she's a hunter that would come for the lookout. Every
 /// pair is checked, which is fine for the handful of ships so far. Ships in
 /// port neither keep a lookout nor count as sails: a harbour full of
 /// merchantmen isn't news.
 fn keep_lookout(
-    mut lookouts: Query<
-        (
-            Entity,
-            &Transform,
-            &mut InSight,
-            Option<&Colours>,
-            Has<Patrol>,
-            Option<&Standing>,
-        ),
-        Without<Docked>,
-    >,
-    ships: Query<
-        (Entity, &Transform, Option<&Colours>, Option<&Serves>),
-        (With<Hull>, Without<Docked>),
-    >,
+    mut lookouts: Query<Lookout, Without<Docked>>,
+    ships: Query<(Entity, &Transform, Flag), UnderSail>,
     relations: Res<Relations>,
     mut alerts: MessageWriter<Alert>,
 ) {
-    for (ship, transform, mut in_sight, colours, warship, standing) in &mut lookouts {
+    for LookoutItem {
+        entity: ship,
+        at: transform,
+        mut in_sight,
+        colours,
+        warship,
+        standing,
+    } in &mut lookouts
+    {
         let position = transform.translation;
         let mark = Mark {
             colours: colours.map(|colours| colours.0),
@@ -229,7 +241,8 @@ fn keep_lookout(
             other != ship && other_transform.translation.distance(position) <= SIGHTING_RANGE
         });
         let mut now = Vec::new();
-        for (other, _, other_colours, serves) in seen {
+        for (other, _, flag) in seen {
+            let (other_colours, serves) = (flag.colours, flag.serves);
             if !in_sight.0.contains(&other) {
                 let hunter = other_colours.and_then(|&Colours(nation)| {
                     Hunter::of(
@@ -252,6 +265,7 @@ fn keep_lookout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::factions::Serves;
     use crate::ship_class::ShipClass;
     use crate::test_support::sim_app;
 

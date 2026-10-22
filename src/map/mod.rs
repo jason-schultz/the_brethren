@@ -6,6 +6,7 @@
 pub mod data;
 pub mod projection;
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::allegiance::Favour;
@@ -13,6 +14,7 @@ use crate::economy::market::{Market, MarketEntry};
 use crate::geometry::{polygon_contains, segment_polygon_distance};
 use crate::goods::Goods;
 use crate::math::to_plane;
+use crate::navigation::route::{NavGraph, route_length};
 use crate::port::Port;
 use data::{MapData, PortData, Terrain, TradeData};
 use projection::GeoProjection;
@@ -96,6 +98,26 @@ impl Land {
     }
 }
 
+/// The charts: the land, the routes round it, and the ports.
+#[derive(SystemParam)]
+pub struct Charts<'w, 's> {
+    pub land: Res<'w, Land>,
+    pub graph: Res<'w, NavGraph>,
+    pub ports: Query<'w, 's, (Entity, &'static Port, &'static Transform)>,
+}
+
+impl Charts<'_, '_> {
+    /// Port `port`'s anchorage.
+    pub fn anchorage(&self, port: Entity) -> Option<Vec3> {
+        self.ports.get(port).ok().map(|(.., at)| at.translation)
+    }
+
+    /// How far it is from `from` to `to` by sea, meters.
+    pub fn passage(&self, from: Vec3, to: Vec3) -> f32 {
+        route_length(from, &self.graph.plan(&self.land, from, to))
+    }
+}
+
 /// Where and how the player's ship starts on a map: docked at a port.
 #[derive(Debug, Clone, Copy)]
 pub struct PlayerStart {
@@ -145,6 +167,8 @@ pub fn load_map(
     let mut start = None;
     for port in &map.ports {
         let anchorage = projection.to_world(port.anchorage);
+        let mut favour = Favour::held_by(port.flag);
+        favour.tier = port.tier;
         let entity = commands
             .spawn((
                 Name::new(port.name.clone()),
@@ -153,7 +177,7 @@ pub fn load_map(
                     town: projection.to_world(port.town),
                     locations: port.locations.clone(),
                 },
-                Favour::held_by(port.flag),
+                favour,
                 market(port, goods)?,
                 Transform::from_translation(anchorage),
             ))
@@ -179,6 +203,7 @@ fn market(port: &PortData, goods: &Goods) -> Result<Market, MapError> {
             stock: trade.stock,
             target: trade.target,
             per_day: trade.per_day * sign,
+            short_for: 0.0,
         })
     };
     let produced = port.produces.iter().map(|trade| entry(trade, 1.0));
@@ -239,7 +264,7 @@ mod tests {
     fn every_port_market_is_well_formed() {
         let (_, _, _, mut world) = west_indies();
         let mut markets = world.query::<(&Name, &Market)>();
-        assert_eq!(markets.iter(&world).count(), 4);
+        assert_eq!(markets.iter(&world).count(), 5);
         for (name, market) in markets.iter(&world) {
             for (i, entry) in market.entries.iter().enumerate() {
                 assert!(entry.target > 0.0, "{name}: zero target");

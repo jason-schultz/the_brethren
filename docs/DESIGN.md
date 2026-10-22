@@ -140,9 +140,20 @@ underneath, so the sea is still where things happen.
 
 ## 3. Setting
 
-- **Era:** roughly 1700–1730, the end of the Golden Age of Piracy. Trading
-  companies are at their height, and the great powers are fighting over
-  colonial trade.
+- **Era: an age, not a year.** The world isn't set in any one year. It
+  draws on the whole age of sail, from the caravels of the mid-1400s to
+  the 1820s, when steam and the navies' last campaigns against piracy
+  ended it: Portuguese and Spanish discovery, the buccaneers, the trading
+  companies at their height, the pirate republic of Nassau, and the great
+  powers fighting over colonial trade, all at once. Things from different
+  decades stand side by side when that makes the better game: Port Royal
+  stands, though it sank in 1692, while Nassau is a pirate republic, as
+  it was from 1716 to 1718.
+- **Accurate in detail, free in time.** Ships, ports, goods, names, and
+  how things worked are as true to history as we can make them; what's
+  mixed is *when*. Where gameplay asks for more than that, we take the
+  license and write it down (§9). Nothing from after the age of sail:
+  no steamships, no ironclads, no rifled guns.
 - **Map:** the real Earth. The first playable region is the **Caribbean and
   the western Atlantic**. Later regions are West Africa, the Indian Ocean,
   and the East Indies (VOC heartland).
@@ -175,9 +186,11 @@ later others.
 
 ### 4.2 Trading Companies — loyal to money
 
-The VOC (Dutch East India Company), the English East India Company, the
-French Compagnie des Indes, the Royal African Company, and smaller
-chartered ventures.
+The VOC (Dutch East India Company), the Dutch West India Company (WIC),
+the English East India Company, the French Compagnie des Indes, and
+smaller chartered ventures. Companies whose business was the slave trade
+are left out (§9). The WIC is the first to come, in the West Indies
+(§7, Milestone 8); the VOC comes with the East Indies.
 
 - **Groups:** company chambers and factories (trading posts), convoy
   fleets, and shareholder blocs.
@@ -230,10 +243,10 @@ Built so far for nations (§5.7): every pair of nations has relations from
 | System | Summary |
 |---|---|
 | **Sailing** | Ships sail straight on any heading. The wind is a speed modifier: a little slower into it, a little faster before it, set per hull. No tacking: realistic, but it made passages tedious. Turning rate depends on speed. |
-| **Navigation** | Orders (move, follow, dock, engage). The crew steers each leg of a route planned around land. |
+| **Navigation** | Orders (move, follow, dock, engage). The crew steers each leg of a route planned around land. A ship aground first works off into open water, then goes on. |
 | **Combat** | Built (§5.5): broadside arcs, reload time, separate damage to hull, rigging, and crew, boarding, and prizes, in three battle styles. Later: shot types (round, chain, grape), and holding the weather gage. |
 | **Ports** | Docking, markets, shipyards, taverns (crew), and faction offices (contracts, commissions, fences). |
-| **Economy** | Goods with per-port supply and demand. Prices respond to trade flows. Regional specialties include sugar, rum, tobacco, spice, cloth, and slaves. Slaves are handled as historical context, not as a player commodity; see §9. |
+| **Economy** | Goods with per-port supply and demand. Prices respond to trade flows. Regional specialties include sugar, rum, tobacco, spice, and cloth. The slave trade is left out of the game; see §9. |
 | **Crew** | Head count, skill, morale, and loyalty. Wages and shares. This drives mutiny. |
 | **Standing** | Per-group reputation, with umbrella standing derived from it. Actions ripple through allies and enemies. |
 | **Politics** | Group leadership, influence, coups, and alliances between groups. |
@@ -353,7 +366,7 @@ separate system: they are the economy's needs, shown to the player.
   escorting its convoys and hunting its raiders. This is the
   "sovereignty" layer of an Earth-bound EVE.
 
-#### The first ports, c. 1716
+#### The first ports
 
 | Port | Produces | Needs | Notes |
 |---|---|---|---|
@@ -364,7 +377,7 @@ separate system: they are the economy's needs, shown to the player.
 
 Spanish silver, smuggled in from the Spanish Main, is left out for now:
 silver is money, so it needs its own treatment as plunder rather than as
-freight. The slave trade appears as context only (§9).
+freight. The slave trade is left out of the game (§9).
 
 ### 5.4 Merchant Captains (built)
 
@@ -429,7 +442,36 @@ and reputation come with factions.
   or take command of her and leave your old ship as the prize. With no
   hands to spare, she's plundered and let go.
 - **Shipyards** repair timbers and rigging for a fee, in proportion to
-  her price, and sell new ships (§5.1).
+  her price, and sell new ships (§5.1). The other captains' ships lying
+  at a yard are made good at their owners' charge, half a hull a day.
+- **Seamanship.** Every captain but the player keeps her ship fit and out
+  of harm the same way, whatever her business: merchant, raider, or
+  man-of-war. It takes the helm from her business whenever it must, and
+  hands it back once she's fit and safe.
+  - *Refitting.* A ship with timbers or rigging below 40%, or fewer men
+    than she needs to work her, puts in at the nearest yard that will have
+    her: her own nation's for a navy's, or any that welcomes her colours.
+    The yard makes her good, half a hull a day; a navy mans her to the
+    full at its charge, and anyone else hires the hands she needs from the
+    tavern, as many as she can pay for. Her business may want more hands
+    still, as a raider wants boarders, and hires them itself.
+  - *Running.* A merchantman or raider runs from a warship that would hunt
+    her, straight away or as near it as open water allows, until she's out
+    of sight. A man-of-war stands. A raider whose lane a warship has found
+    gives up her cruise.
+  - *A stern chase is a long chase.* A hunter, warship or raider, who has
+    chased the same ship for 4 hours without taking her gives her up and
+    lets her be for a day.
+
+  Each rule is written once and every kind of ship follows it, so a new
+  kind of ship needs only her business. The soaks found why: each rule
+  was missing from one kind of ship or another, and each time it made a
+  loop. A raider shot to pieces, or with 3 men after manning her prizes,
+  struck to every merchantman she attacked and was let go to attack
+  again, up to 3,200 times a soak. A patrol with her timbers shot away
+  did the same 400 times, and a raider homeward bound past a patrol ran,
+  turned for home into the patrol, and ran again, 2,000 times, until both
+  were 3,500 km off the map.
 - **Losing.** Your ship sinking ends the game until you load a save.
   Losing her to mutiny or the law doesn't (§5.9).
 - **Replacements.** A merchant sunk or taken is replaced two days later.
@@ -472,13 +514,13 @@ lies, her crew, hold, and damage, and a Look button to find her.
   wanted.
 - **Relations between nations.** Every pair of nations stands from −100
   to 100: at war at −50 or below, hostile below −25, allies at 50 and
-  up, and at peace between. In 1716 England and Spain are at an uneasy
-  peace (−20), the Brethren are hostile to England (−30), and at war
+  up, and at peace between. At the start England and Spain are at an
+  uneasy peace (−20), the Brethren are hostile to England (−30), and at war
   with Spain (−60). Any ship's deeds under colours move relations
   between her colours and the nation she touched: attacking −2, taking
   −3, sinking −4, delivering to another nation's port +1, and lying in a
   port as it rises against its nation −25. Nations already at war take
-  no further offence. Relations drift back to their 1716 footing by 0.5
+  no further offence. Relations drift back to their opening footing by 0.5
   a day. Changes of terms are news in the HUD.
 - **What war means.** Navies hunt the ships of nations they're at war
   with, a captain their nation wants, and anyone they see attacking their
@@ -585,21 +627,57 @@ Every port regards each nation with a favour from 0 to 100.
   the share of its needs that are short. A port short of everything sinks
   to about 5; one short of a few things grumbles but holds.
 - **Supply.** Whoever brings a port what it needs, by contract or at
-  market, wins favour for the colours she flies: 25 for filling the whole
-  gap below target of one good, in proportion. The other nations lose
-  half that much. Only the gap counts, so flooding a full market wins
+  market, wins favour for the colours she flies: 4 for filling the whole
+  gap below target of one good, in proportion, as a matter of course.
+  Relief is worth more: up to four times as much for a good the port has
+  gone short of for 30 days, in proportion to how long. Routine trade
+  costs no one; relief costs the other nations half what it's worth
+  beyond routine. Only the gap counts, so flooding a full market wins
   nothing. This is how pirates selling plunder win over a town, and how
   a nation that lets a port go hungry loses it.
-- **Restless.** Below 25 for its owner, a port is restless: news in the
-  HUD, and its garrison deserts at two men a day.
+
+  The steps are small beside the bands on purpose. Supply used to win
+  25, half the way from a stranger's 25 to the 50 that opens a town to
+  an enemy, and a quarter of the scale: one cargo could turn a port.
+  Now even the greatest relief, a whole shortage filled after a month
+  without, wins 16, and a routine cargo filling half a gap wins 2. A
+  port is won over by a run of deliveries against settling's pull back
+  to 25: holding a rival at 50 takes about a relief delivery a week.
+- **Tiers.** How firmly a port is held is set in the map:
+
+  | Tier | Ports | Restless below | Rising a day, no garrison |
+  |---|---|---|---|
+  | **Capital**, a nation's seat | Port Royal, Santiago de Cuba, Nassau | 10 | 5% |
+  | **Colony**, a town like most | Kingston | 25 | 40% |
+  | **Haven**, a lawless anchorage | Tortuga | 35 | 60% |
+
+  A capital holds through all but utter neglect, and even restless rises
+  only slowly. A haven goes to whoever looks after it. The first soaks
+  had England take Nassau and then Santiago, Spain's only port, within
+  45 days, by trade alone: tiers keep each nation its seat, and leave
+  Tortuga as the port meant to change hands. Nassau is a capital for
+  the game's sake, not history's: it's the Brethren's one safe harbour.
+- **Convoys from home.** Every 20 days a convoy brings each of a crown's
+  capitals a third of the stock it wants of everything it needs, as far
+  as it wants. They still go short between convoys, so carrying for them
+  still pays, but the crown no longer forgets its own seat. The Brethren
+  have no crown to send them anything: Nassau lives on plunder. Their
+  raiders are out for what Brethren ports are short of: they lie in wait
+  three times as often on the lanes from ports that make it, and home from
+  a cruise make for the nearest port that would have them and is short of
+  something aboard, rather than just the nearest.
+- **Restless.** Below its tier's mark for its owner, a port is restless:
+  news in the HUD, and its garrison deserts at two men a day.
 - **Going over.** A restless port rises for the nation it favours most,
-  if more than its owner, when a ship under that nation's colours lies in
-  its harbour and none of its owner's warships stand within 1.5 km. The
-  daily chance is 40% with no garrison, less as its soldiers near their
-  target, and none at full strength. The port takes its new flag with 60
-  favour for its new nation and 10 for its old one. The ship that was
-  there is credited: −25 relations between the nations, and if she's the
-  player, −15 standing with the old nation (+5 with the Brethren).
+  if more than its owner, when an armed ship of that nation (a warship,
+  a raider, or the player) lies within 1.5 km of its anchorage and none
+  of its owner's does. Trade wins a town over, but only guns raise it:
+  a merchantman in harbour does nothing. The daily chance is its tier's
+  with no garrison, less as its soldiers near their target, and none at
+  full strength. The port takes its new flag with 60 favour for its new
+  nation and 10 for its old one. The ship that was there is credited:
+  −25 relations between the nations, and if she's the player, −15
+  standing with the old nation (+5 with the Brethren).
 - **Dealing with the enemy.** A town with 50 favour for a nation lets
   its ships in even at war with its owner.
 - **Seen in port.** The town overview gives the port's mood and its
@@ -723,7 +801,9 @@ A ship's flag, rig, and guns can be seen; her business can only be heard.
   wrecks. Each captain hears her own version. Talk of a sailing may get
   the cargo wrong (another good that travels the same way). It's true 60% of the time for a captain
   who stands at 0 with the port's merchants, plus 0.4% for every point of
-  standing, between 40% and 95%.
+  standing, between 40% and 95%. Only captains hear it: officers and
+  crew hear nothing, and ships passing at sea don't speak each other
+  (both planned, Milestone 7).
 - **Intelligence.** The groups the player serves send her the truth of
   the sailings that concern them, as news: a crown's navy, raiders of
   nations hostile to it putting to sea; a governor, foreign soldiers on
@@ -806,6 +886,16 @@ Tools for playtesting, not part of play.
   to the crashes folder. Warnings and errors the game logs are kept too.
 - **Soaks.** `cargo soak` runs a new game's world headless with no one at
   the helm, as fast as it goes (100 days in about a minute), chronicled.
+  Each casts the world's dice from a fresh seed, so no two run alike; the
+  log and the logbook keep the seed, and `cargo soak --seed N` plays a
+  run again. Soaks can run side by side: a log is named for the second
+  its run began, and one begun in the same second as another takes the
+  next name (`…-soak-02`), never writing over a log already there.
+- **Supply and demand.** Every run's summary and page list each good
+  with the ports that make it and how much a day, the ports that use it,
+  what convoys land at most, and whether the world is short or over,
+  shortest first. Ships' own victualling isn't counted. It's how a map's
+  economy is balanced: see Milestone 6.
 - **The logbook.** `cargo logbook` serves the logs as web pages on this
   machine: every run, each in full with charts, two compared, the trend
   of headline numbers over the last 20 runs of a kind, and crash reports.
@@ -865,7 +955,7 @@ Tools for playtesting, not part of play.
 4. ✅ Port stock and jobs generated from port needs.
 5. ✅ More ports: Kingston across the harbour, and Nassau, on a West Indies
    map with Cuba, Hispaniola, and the Bahamas. A world calendar starting 1
-   June 1716.
+   June, with months but no years (§3).
 6. ✅ Time compression, zooming out to the chart, and alerts (§2.2).
 
 ### Milestone 3 — "Colors"
@@ -894,6 +984,144 @@ Tools for playtesting, not part of play.
    sheathing, more guns pierced, a bigger hold, more berths). Shot types.
 3. Better ship models and art.
 
+### Milestone 6 — "Lines of supply"
+The world must make what it uses. The logbook's supply-and-demand table
+(§5.13) showed it doesn't: in October 2026 the ports used 3.1 tons of
+munitions a day against 0.5 made and 0.8 landed by convoys, and naval
+stores 3.8 against 1.5 and 1.1, so Nassau and Port Royal went without
+for months, and raiders had next to nothing to take. Meanwhile Kingston's
+sugar, molasses, logwood, indigo, ginger, and pimento piled up with no
+port to use them. Every change here is checked against that table.
+1. **Supply fleets from home, as ships.** Convoys (§5.10) sail in from
+   the map's edge to a crown's capitals and are seen doing it: "the
+   Jamaica fleet is in" is news in the tavern, and the player can see
+   the market about to move. They carry home what the colonies make, so
+   exports have somewhere to go. Their escort is strong enough that
+   attacking them is suicide; for now they can't be fought at all.
+2. **The smugglers' run.** Traders out of Carolina and New England sail
+   in from the edge to Nassau with powder, shot, and naval stores, and
+   buy plunder: historically, the colonies kept the Republic of Pirates
+   supplied. It gives the Brethren a supply that isn't piracy, and a
+   lever for diplomacy later: England pressing its colonies to stop the
+   trade starves Nassau.
+3. **More ports that make things**, and more made at the ports there
+   are, balanced against the table, so that trade routes are worth
+   setting up, protecting, and raiding.
+4. **Darkness.** Every ship now sees every other within 8 km, day and
+   night. Sight should fall at night: perhaps 8 km by day and 2 to 3 km
+   on a dark night, more under a moon if the moon is worth having. A ship
+   can be ordered darkened, her lanterns out, to be seen less far still,
+   at some cost (slower, or a risk of collision). Slipping through a
+   blockade at night then needs no special rule: she times her run and
+   steers between the guard ships. It helps raiders and smugglers
+   everywhere, not only at blockades.
+5. **Blockades.** Warships of a nation at war with a port's owner, lying
+   off its anchorage, blockade it: ordinary trade can't reach it, so it
+   starves. Supply that gets through is relief (§5.10), so the runner
+   wins real favour there, and the blockading nation none. The navies'
+   guard duty (§5.7) is the start of it.
+
+### Milestone 7 — "Running the blockade"
+Blockade running kept Nassau and Charleston alive, and makes the stories
+the game is for. It builds on darkness and blockades (Milestone 6) and
+on word of mouth (§5.12).
+1. **Coves and longboats.** A few landing places along the coast near
+   each port, in the map data: coves, beaches, creeks. A ship anchors off
+   one and lands her cargo by boat, a few tons an hour, exposed while she
+   works; darkness makes it safer. What's landed reaches that port's
+   market, at a smuggler's discount, with some risk of its being found
+   and seized.
+2. **Arranged drops.** Word is sent ashore, through a friendly tavern or
+   a fishing boat, and a rendezvous is fixed: the council will meet her
+   at a cove on a set night. The arrangement is news (§5.12), and news
+   travels: an officer with hidden loyalty (§5.9), or someone in a
+   friendly port's tavern who wants favour with its nation, can tell the
+   blockaders, and their navy sends a ship to the cove. She may come in
+   to find a frigate waiting. The talk tells it vaguely at first
+   ("something's being run ashore on the north coast"), the way taverns
+   get a cargo wrong, and truer the more it's repeated; the navy sends
+   its nearest patrol to stand guard, as patrols already do over a wreck.
+3. **Officers hear the talk.** Today only captains hear a tavern, and
+   officers act on rules alone (a turncoat sells his captain out when she
+   docks where she's crossed). Officers ashore in a port should hear what
+   it talks of too, and their hidden loyalty decides what they do with
+   it: a turncoat aboard sells the plot to the blockaders, an ambitious
+   lieutenant of the blockading navy carries it to his superiors for
+   favour, a loyal one keeps it. Crew stay a number; the officers are
+   the ears.
+4. **Speaking ships.** Ships learn nothing at sea today but what they
+   see. Two ships of one flag, or friendly flags, passing close "speak"
+   each other, hailing or closing to talk, and trade what each has
+   heard. Word then travels faster than port to port, so a plot has a
+   reason to keep quiet and a blockade runner a reason to keep clear of
+   anyone. Flag signals stay crude and navy-only (Popham's code is 1800;
+   no Morse, which is post-sail).
+
+
+### Milestone 8 — "New flags"
+France and the Dutch Republic join England, Spain, and the Brethren, with
+the ports to make them matter. Each nation is data (factions, groups,
+fleets) and each port is data (map), so most of the work is ports, art,
+and balance against the supply table.
+1. **France, on Saint-Domingue.** The western third of Hispaniola,
+   beside Tortuga and already on the map: Petit-Goâve and Léogâne, and
+   Cap-Français on the north coast. Indigo and sugar; wants provisions,
+   manufactures, and naval stores. Groups: the Marine, the Governor of
+   Saint-Domingue, the merchants. A fourth crown with interests that cross
+   everyone's.
+2. **More of Spain.** Havana as Spain's real seat in the region and the
+   treasure fleet's gathering point, a better capital than Santiago;
+   Santo Domingo on Hispaniola; later San Juan and St. Augustine. A
+   wrecked treasure fleet off Florida, after the 1715 fleet, whose
+   salvage camp Henry Jennings raided in 1716: it fits the wreck and
+   diving rules (§5.12) as they are.
+3. **The Dutch Republic, trading first.** Curaçao (Willemstad), the great
+   smuggling market of the Spanish Main, and St. Eustatius ("Statia"), a
+   free port where anyone could buy powder and shot. Neutral in most
+   wars; their ports deal with nearly anyone. This needs the map
+   extended east and south, toward the Lesser Antilles and the Main.
+4. **The Dutch West India Company (WIC)**, the first trading company
+   faction (§4.2): its own factors, ships, and contracts, loyal to
+   money, hiring anyone useful. In the West Indies it's the WIC; the VOC,
+   the Dutch *East* India Company, belongs to the East Indies region
+   (Later), and comes with it.
+5. **A neutral port.** Danish St. Thomas (Charlotte Amalie) traded with
+   anyone, pirates included: somewhere for enemies to meet besides
+   favour.
+6. **More of England**, as the map grows: Barbados, Antigua (English
+   Harbour, the navy's other base), Bermuda, and Charleston, home port
+   of the smugglers' run (Milestone 6).
+
+Portugal never held Caribbean colonies: its Atlantic empire was Brazil
+and the West African coast. It belongs to a later region, with Brazil's
+gold fleets as a prize, and its caravels and navigators belong to the
+age the game draws on.
+
+### Milestone 9 — "Governor"
+Trade as a way up, while she still sails. It needs fleets (Later) first,
+since a route is protected by ships under her command.
+1. **Her own trade routes.** A standing contract she sets up between two
+   ports: her own merchantmen sail it, she or her escorts guard it, and
+   rivals and raiders prey on it. The trading companies' path (§4.2):
+   contract hauler, company captain, factor.
+2. **Governorship.** With enough standing with a nation's governor and
+   enough favour in one of its ports, she's offered the port: she sets
+   its garrison, its taxes, and the routes it commissions, and answers
+   for it going hungry or restless. The Brethren's equivalent is a seat
+   on the Nassau council. A governor's routes still need defending, so
+   it draws her back to sea, not into a management screen.
+
+### About the history
+A short note in the game, reached from the main menu (with the credits),
+saying plainly that the trade and wealth of this period rested on the
+Atlantic slave trade and the enslavement of millions of Africans, that
+the game leaves it out deliberately rather than make it a mechanic, and
+pointing to places to learn about it properly: for example the
+International Slavery Museum in Liverpool, the Smithsonian's National
+Museum of African American History and Culture, and the Trans-Atlantic
+Slave Trade Database (slavevoyages.org). Links chosen and checked when
+it's written. Small, and can go in whenever the menu has room for it.
+
 ### Later
 Fleets, more regions (Africa, Indian Ocean, East Indies), weather and
 storms, and multiple save slots.
@@ -907,6 +1135,9 @@ storms, and multiple save slots.
   two minutes at top speed for Port Royal to Nassau.
 - Fleet command: should it use direct control of escorts, or
   formation-level orders?
+- Should the supply fleets from home (Milestone 6) ever be fair game?
+  Taking a treasure fleet is the great pirate prize, and could be a
+  late-game goal for a captain with a fleet of her own.
 - Can the player lose their only ship? What does game over, or "start over
   as a common sailor", look like?
 - How long should port actions take? Time passes in port (decided), but
@@ -921,7 +1152,7 @@ Every deliberate deviation from history or physics goes here, with a reason.
 | Deviation | Reason |
 |---|---|
 | Regional geography drawn at 0.5× real distance (`distance_scale` in each map file). Ships stay true scale | A crossing of the Port Royal approaches takes minutes rather than an hour. Open-ocean passages will need more compression, plus time acceleration. |
-| The world begins on 1 June 1716, and the player joins it 18 hours later, after the 1692 earthquake and 1703 fire at Port Royal, with Nassau a pirate haven | Keeps Port Royal alive in our era and puts the player in the Republic of Pirates. |
+| The world has no year. It draws on the age of sail from the mid-1400s to the 1820s, and things from different decades stand side by side: Port Royal stands, though it sank in 1692, beside Nassau's pirate republic of 1716 to 1718 | Lets the game have the best of the whole age: the buccaneers, the pirate republic, the trading companies, and every navy at its height. Details stay accurate; only *when* is mixed. |
 | Coastlines are hand-traced approximations | First pass. To be refined from real coastline data. |
 | Ports "produce" goods that really arrived by off-map shipping, such as Kingston's provisions and manufactures from New England and London | Until the map reaches those sources, someone has to supply them. |
 | The Bahama Banks are impassable shoals, and the bank edges are approximate. Small sloops really could cross them | Keeps deep-water routes historical and simple. Shallow-draft sailing can come later. |
@@ -936,7 +1167,7 @@ Every deliberate deviation from history or physics goes here, with a reason.
 | Mutineers vanish with the ship they take | No pirate captains to sail her yet. |
 | NPC captains burn the ships they take | Fleets of NPC prizes would need captains and orders of their own. The cargo and the port's need are what matter. |
 | A town rises with one ship of the nation it favours in harbour, without a landing or a siege | Lets a single captain, or a raider, decide a port's fate; assaults can come later. |
-| Relations between nations drift back to their 1716 footing | Keeps one bad month from locking the map into permanent war. |
+| Relations between nations drift back to their opening footing | Keeps one bad month from locking the map into permanent war. |
 | The Brethren count as a nation with ports, colours, and relations | Simplest way to put pirate havens and their politics on the same footing as the crowns'. |
 | Officers each bring one fixed advantage, with no skill levels | Easy to read and to weigh. |
 | Each nation is the same three groups, and Acts of Grace come round on a fixed calendar. The real King's Pardon was proclaimed once, in September 1717 | Uniform rules are easy to learn, and a known date gives a wanted captain something to plan for. |
@@ -946,4 +1177,5 @@ Every deliberate deviation from history or physics goes here, with a reason.
 | An arrested captain is fined and freed the same day | No jail time to sit through. |
 | Ships sail straight on any heading, never tacking. Wind only scales speed, from 0.75× head to wind to 1.2× dead downwind | Beating to windward was realistic but made passages tedious. |
 | Every shipyard sells every class at once, from schooner to frigate, takes your ship in part exchange, and the new one keeps her name | A new ship should be a purchase, not a wait for one to come up for sale. |
-| Slave trade represented only as historical context (faction behavior, port descriptions), never as player cargo | Content choice. |
+| The slave trade is left out: no enslaved people as cargo, no slaving ships, contracts, markets, or companies whose business it was (so no Royal African Company, and no South Sea Company, whose foothold in the Spanish colonies was the right to sell slaves there) | The Atlantic economy of the period rested on it, and the game won't make it a mechanic or a source of profit. It's acknowledged plainly, not hidden: see "About the history" in §7. |
+| Tortuga is a pirate haven, as it was for the buccaneers of the 1630s to 1660s, beside the French Saint-Domingue that later absorbed it | Both were true, decades apart. Decide when France arrives (§7, Milestone 8): keep it the Brethren's, or hand it to France and find them another haven. |

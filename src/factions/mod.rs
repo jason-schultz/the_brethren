@@ -19,6 +19,7 @@
 
 use std::fmt;
 
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -250,6 +251,14 @@ pub struct Colours(pub Nation);
 /// counts as one of her nation's merchantmen.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Serves(pub GroupKind);
+
+/// A ship's flag: the colours she flies, if any, and whom she sails for.
+/// A deed against her touches the [`Group`] they make her one of.
+#[derive(QueryData)]
+pub struct Flag {
+    pub colours: Option<&'static Colours>,
+    pub serves: Option<&'static Serves>,
+}
 
 /// A captain's standing with each group of each nation: her name with
 /// them, kept on the ship she commands. Any captain can have one; for now
@@ -824,7 +833,7 @@ mod tests {
     }
 
     #[test]
-    fn in_1716_the_brethren_prey_on_england_and_fight_spain() {
+    fn at_the_start_the_brethren_prey_on_england_and_fight_spain() {
         let relations = Relations::default();
         assert_eq!(
             relations.terms(Nation::ENGLAND, Nation::SPAIN),

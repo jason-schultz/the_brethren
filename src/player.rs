@@ -2,9 +2,8 @@
 //! fight.
 
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 
-use crate::camera::{CameraRig, cursor_to_ocean, near_cursor};
+use crate::camera::Pointer;
 use crate::combat::gunnery::Broadside;
 use crate::combat::{Battery, EngageOrder, FireControl, FireOrder, Sunk};
 use crate::controls::{Control, ControlUsed, used};
@@ -13,7 +12,7 @@ use crate::navigation::{Arrival, KeepCompany, SailOrder};
 use crate::port::{Docked, Port};
 use crate::prizes::BoardOrder;
 use crate::schedule::FrameSet;
-use crate::ui::Notices;
+use crate::ui::Noticeboard;
 use crate::wrecks::Wreck;
 
 /// Marks the ship the player commands.
@@ -125,6 +124,12 @@ fn order_broadsides(
     }
 }
 
+/// The player's ship at sea and afloat.
+type PlayerAtSea = (With<Player>, Without<Docked>, Without<Sunk>);
+
+/// Other armed ships than the player's.
+type OtherArmed = (With<Battery>, Without<Player>);
+
 /// Right-click on the ocean orders the player's ship to sail there. Right-click
 /// near another ship at sea engages her, or keeps company with her if she's
 /// the player's ward; near a port, sails there to dock; near a wreck, lies
@@ -133,29 +138,23 @@ fn order_broadsides(
 /// given from the ocean view while docked; the port screen handles leaving.
 fn order_sail_on_click(
     buttons: Res<ButtonInput<MouseButton>>,
-    window: Single<&Window, With<PrimaryWindow>>,
-    camera: Single<(&Camera, &GlobalTransform), With<CameraRig>>,
-    player: Single<Entity, (With<Player>, Without<Docked>, Without<Sunk>)>,
-    ships: Query<(Entity, &Name, &Transform, Has<Docked>), (With<Battery>, Without<Player>)>,
+    pointer: Pointer,
+    player: Single<Entity, PlayerAtSea>,
+    ships: Query<(Entity, &Name, &Transform, Has<Docked>), OtherArmed>,
     ports: Query<(Entity, &Port, &Transform)>,
     wrecks: Query<&Transform, With<Wreck>>,
     mut orders: MessageWriter<SailOrder>,
     mut engagements: MessageWriter<EngageOrder>,
     (wards, mut company): (Query<&Escort>, MessageWriter<KeepCompany>),
-    mut notices: ResMut<Notices>,
-    time: Res<Time<Real>>,
+    mut notices: Noticeboard,
 ) {
     if !buttons.just_pressed(MouseButton::Right) {
         return;
     }
-    let (camera, camera_transform) = *camera;
-    let Some(clicked) = cursor_to_ocean(&window, camera, camera_transform) else {
+    let Some(clicked) = pointer.on_ocean() else {
         return;
     };
-    let Some(cursor) = window.cursor_position() else {
-        return;
-    };
-    let near = |point: Vec3| near_cursor(camera, camera_transform, cursor, point);
+    let near = |point: Vec3| pointer.near(point);
     // Ships at sea first: one may be passing the anchorage.
     let mut clicked_ships: Vec<_> = ships
         .iter()
@@ -180,10 +179,9 @@ fn order_sail_on_click(
             engagements.write(EngageOrder { ship, target });
             return;
         }
-        Some(&(_, name, _, true)) => notices.post(
-            format!("{name} lies in port, under the guns of the fort. Catch her at sea."),
-            time.elapsed_secs(),
-        ),
+        Some(&(_, name, _, true)) => notices.post(format!(
+            "{name} lies in port, under the guns of the fort. Catch her at sea."
+        )),
         None => {}
     }
     company.write(KeepCompany { ship, with: None });

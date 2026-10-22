@@ -318,11 +318,7 @@ pub(super) fn deliver_jobs(
         });
         hold.consigned.remove(job.good, quantity);
         if let Some(entry) = market.entry_mut(job.good) {
-            supplies.write(Supplied {
-                port: job.destination,
-                ship: carrier.0,
-                share: entry.gap_filled(quantity),
-            });
+            supplies.write(Supplied::of(job.destination, carrier.0, entry, quantity));
             entry.stock += quantity;
         }
         let bonus = service.map_or(0.0, |service| contract_bonus(service, group));
@@ -343,6 +339,7 @@ mod tests {
             stock,
             target: 100.0,
             per_day: -1.0,
+            short_for: 0.0,
         }
     }
 

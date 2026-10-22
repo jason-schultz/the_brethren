@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 
 use chronicle::{Run, Stamp};
 
-use crate::fold::{Matchup, Report, Series};
+use crate::fold::{Matchup, Report, Series, Supply};
 use crate::headline::{compare, headline, shown, shown_change};
 
 /// The most lines any one list runs to.
@@ -84,14 +84,78 @@ pub(crate) fn price_moves(prices: &std::collections::BTreeMap<String, Series>) -
         .collect()
 }
 
+/// `amounts` by port, most first: "Kingston 1.5, Nassau 0.5".
+pub(crate) fn per_port(amounts: &std::collections::BTreeMap<String, f64>) -> String {
+    let mut amounts: Vec<(&String, &f64)> = amounts.iter().collect();
+    amounts.sort_by(|a, b| b.1.total_cmp(a.1));
+    amounts
+        .iter()
+        .map(|(port, amount)| format!("{port} {amount:.1}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Whether the world makes enough of a good: "short 1.8 a day".
+pub(crate) fn balance(supply: &Supply) -> String {
+    match supply.balance() {
+        by if by < -0.05 => format!("short {:.1} a day", -by),
+        by if by > 0.05 => format!("over {by:.1} a day"),
+        _ => "even".to_string(),
+    }
+}
+
+/// Every good and its supply, the shortest first.
+pub(crate) fn shortest_first(
+    supply: &std::collections::BTreeMap<String, Supply>,
+) -> Vec<(&String, &Supply)> {
+    let mut goods: Vec<(&String, &Supply)> = supply.iter().collect();
+    goods.sort_by(|a, b| a.1.balance().total_cmp(&b.1.balance()));
+    goods
+}
+
+/// Every good's supply and demand, the shortest first: "Munitions: short
+/// 1.8 a day; made 0.5 (Kingston 0.5); convoys up to 0.8; used 3.1 (…)".
+pub(crate) fn supply_lines(supply: &std::collections::BTreeMap<String, Supply>) -> Vec<String> {
+    shortest_first(supply)
+        .into_iter()
+        .map(|(good, supply)| {
+            let mut parts = vec![balance(supply)];
+            if !supply.made.is_empty() {
+                let made = per_port(&supply.made);
+                parts.push(format!("made {:.1} ({made})", supply.total_made()));
+            }
+            if supply.convoys > 0.0 {
+                parts.push(format!("convoys up to {:.1}", supply.convoys));
+            }
+            if !supply.used.is_empty() {
+                let used = per_port(&supply.used);
+                parts.push(format!("used {:.1} ({used})", supply.total_used()));
+            }
+            format!("{good}: {}", parts.join("; "))
+        })
+        .collect()
+}
+
+/// What a run was and when it began: "False Colours 0.1.0, soak run begun
+/// 2026-10-20 18:30 UTC, seed 42".
+pub fn begun(report: &Report) -> String {
+    let seed = report
+        .seed
+        .map_or_else(String::new, |seed| format!(", seed {seed}"));
+    format!(
+        "False Colours {}, {} run begun {}{seed}",
+        report.version,
+        report.run.name(),
+        Stamp::at(report.started),
+    )
+}
+
 /// The summary of run `id`, against `against` if given: another run, and
 /// its id.
 pub fn summary(id: &str, report: &Report, against: Option<(&str, &Report)>) -> String {
     let mut out = format!(
-        "Run {id}: False Colours {}, {} run begun {}. {:.1} game days in {} real. {}\n",
-        report.version,
-        report.run.name(),
-        Stamp::at(report.started),
+        "Run {id}: {}. {:.1} game days in {} real. {}\n",
+        begun(report),
         report.days,
         duration(report.real_seconds),
         ending(report),
@@ -233,6 +297,11 @@ pub fn summary(id: &str, report: &Report, against: Option<(&str, &Report)>) -> S
     }
     list(
         &mut out,
+        "Supply and demand, by the ports, the shortest first",
+        supply_lines(&economy.supply).into_iter(),
+    );
+    list(
+        &mut out,
         "Prices that moved most",
         price_moves(&economy.prices).into_iter(),
     );
@@ -287,7 +356,7 @@ mod tests {
     use super::*;
     use crate::fold::fold;
     use crate::fold::tests::{battle, line, log, side};
-    use chronicle::{Alarm, AlarmKind, BattleEnd, Record, Role};
+    use chronicle::{Alarm, AlarmKind, BattleEnd, GoodState, PortState, Record, Role, Snapshot};
 
     fn sample() -> Report {
         let mut lines = vec![
@@ -379,6 +448,52 @@ mod tests {
         )]));
         assert!(text_first_line(&summary("x", &report, None)).ends_with("CRASHED: no such ship"));
         assert_eq!(duration(3_725.0), "1 h 02 min");
+    }
+
+    #[test]
+    fn supply_and_demand_shows_what_each_port_makes_and_uses_shortest_first() {
+        let good = |good: &str, per_day: f64, convoys| GoodState {
+            good: good.into(),
+            stock: 0.0,
+            target: 10.0,
+            price: 1.0,
+            needed: per_day < 0.0,
+            per_day,
+            convoys,
+        };
+        let port = |name: &str, goods| PortState {
+            port: name.into(),
+            flag: "England".into(),
+            goods,
+        };
+        let snapshot = Snapshot {
+            ports: vec![
+                port(
+                    "Kingston",
+                    vec![good("Munitions", 0.5, 0.0), good("Sugar", 3.0, 0.0)],
+                ),
+                port("Port Royal", vec![good("Munitions", -1.0, 0.5)]),
+                port(
+                    "Nassau",
+                    vec![good("Munitions", -2.0, 0.0), good("Sugar", -1.0, 0.0)],
+                ),
+            ],
+            ..Snapshot::default()
+        };
+        let report = fold(&log(vec![line(
+            1.0,
+            1.0,
+            Record::Snapshot(Box::new(snapshot)),
+        )]));
+        assert_eq!(
+            supply_lines(&report.economy.supply),
+            [
+                "Munitions: short 2.0 a day; made 0.5 (Kingston 0.5); convoys up to 0.5; \
+                 used 3.0 (Nassau 2.0, Port Royal 1.0)",
+                "Sugar: over 2.0 a day; made 3.0 (Kingston 3.0); used 1.0 (Nassau 1.0)",
+            ]
+        );
+        assert!(summary("x", &report, None).contains("\nSupply and demand"));
     }
 
     fn text_first_line(text: &str) -> &str {

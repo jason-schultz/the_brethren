@@ -142,6 +142,7 @@ pub(crate) mod tests {
                     version: "0.1.0".into(),
                     run,
                     started: 1_700_000_000,
+                    seed: None,
                 },
                 Record::End,
             ]

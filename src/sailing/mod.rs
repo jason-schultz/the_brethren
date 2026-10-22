@@ -2,6 +2,7 @@
 
 pub mod physics;
 
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use serde::Deserialize;
 
@@ -112,6 +113,22 @@ impl Plugin for SailingPlugin {
     }
 }
 
+/// A ship under way: her hull and how she's handled, and where she is.
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct Sailing {
+    entity: Entity,
+    hull: &'static Hull,
+    helm: &'static Helm,
+    handling: &'static SailHandling,
+    rigging: &'static Rigging,
+    laden: &'static Laden,
+    heading: &'static mut Heading,
+    speed: &'static mut Speed,
+    transform: &'static mut Transform,
+    aground: &'static mut Aground,
+}
+
 /// Steers, accelerates, and moves every ship one fixed step. A ship whose
 /// next step would put it on land runs aground: it stops dead and stays
 /// put until it is steered off.
@@ -121,22 +138,11 @@ fn sail_ships(
     land: Res<Land>,
     mut alerts: MessageWriter<Alert>,
     mut groundings: MessageWriter<Grounded>,
-    mut ships: Query<(
-        Entity,
-        &Hull,
-        &Helm,
-        &SailHandling,
-        &Rigging,
-        &Laden,
-        &mut Heading,
-        &mut Speed,
-        &mut Transform,
-        &mut Aground,
-    )>,
+    mut ships: Query<Sailing>,
 ) {
     let dt = time.delta_secs();
-    for (
-        ship,
+    for SailingItem {
+        entity: ship,
         hull,
         helm,
         handling,
@@ -146,7 +152,7 @@ fn sail_ships(
         mut speed,
         mut transform,
         mut aground,
-    ) in &mut ships
+    } in &mut ships
     {
         let target = match helm.sails {
             Sails::Set => {

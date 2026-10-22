@@ -8,6 +8,7 @@
 use bevy::prelude::*;
 
 use super::Refusal;
+use super::jobs::shortfall;
 use crate::cargo::{Hold, Purse};
 use crate::clock::DAY;
 use crate::crew::{Complement, Crew};
@@ -33,6 +34,9 @@ pub struct MarketEntry {
     /// Change in stock per day: positive where the port produces the good,
     /// negative where it uses it up.
     pub per_day: f64,
+    /// Days it has gone short of it, by [`shortfall`]'s reckoning: none
+    /// while it has enough.
+    pub short_for: f64,
 }
 
 impl MarketEntry {
@@ -89,6 +93,16 @@ pub fn asking_price(entry: &MarketEntry, base_price: f64, quantity: u32) -> Opti
             })
             .sum(),
     )
+}
+
+/// The most of `wanted` units a purse of `purse` buys, or the market has.
+pub fn affordable(entry: &MarketEntry, base_price: f64, wanted: u32, purse: u32) -> u32 {
+    (0..=wanted)
+        .rev()
+        .find(|&quantity| {
+            asking_price(entry, base_price, quantity).is_some_and(|cost| cost <= purse)
+        })
+        .unwrap_or(0)
 }
 
 /// What the market bids for `quantity` units, priced one at a time as its
@@ -149,12 +163,26 @@ pub struct Trade {
 }
 
 /// A ship brought a port goods it needed, by sale or contract. `share` is
-/// how much of its shortage she filled, as a fraction of its target.
+/// how much of its shortage she filled, as a fraction of its target, and
+/// `waited` how many days it had gone short.
 #[derive(Message, Debug, Clone, Copy, PartialEq)]
 pub struct Supplied {
     pub port: Entity,
     pub ship: Entity,
     pub share: f64,
+    pub waited: f64,
+}
+
+impl Supplied {
+    /// `ship` bringing `port` `quantity` of `entry`, before it's landed.
+    pub fn of(port: Entity, ship: Entity, entry: &MarketEntry, quantity: f64) -> Self {
+        Self {
+            port,
+            ship,
+            share: entry.gap_filled(quantity),
+            waited: entry.short_for,
+        }
+    }
 }
 
 /// The ship's side of a trade.
@@ -238,6 +266,11 @@ pub(super) fn drift_stock(time: Res<Time>, mut markets: Query<&mut Market>) {
     for mut market in &mut markets {
         for entry in &mut market.entries {
             entry.stock = (entry.stock + entry.per_day * days).clamp(0.0, entry.target * MAX_STOCK);
+            entry.short_for = if shortfall(entry).is_some() {
+                entry.short_for + days
+            } else {
+                0.0
+            };
         }
     }
 }
@@ -291,11 +324,7 @@ pub(super) fn trade(
                 }
             }
             Side::Sell => {
-                supplies.write(Supplied {
-                    port: docked.port,
-                    ship: order.ship,
-                    share: entry.gap_filled(quantity),
-                });
+                supplies.write(Supplied::of(docked.port, order.ship, entry, quantity));
                 entry.stock += quantity;
                 purse.0 += price;
                 hold.owned.remove(order.good, quantity);
@@ -315,6 +344,7 @@ mod tests {
             stock,
             target: 100.0,
             per_day: 10.0,
+            short_for: 0.0,
         }
     }
 
@@ -359,6 +389,17 @@ mod tests {
         let ten = asking_price(&rum, 90.0, 10).unwrap();
         assert!(ten > one * 10);
         assert_eq!(asking_price(&rum, 90.0, 61), None, "only 60 in stock");
+    }
+
+    #[test]
+    fn a_purse_buys_as_many_as_it_can_pay_for_and_the_market_has() {
+        let goods = Goods::standard();
+        let rum = entry(&goods, "rum", 60.0);
+        let ten = asking_price(&rum, 90.0, 10).unwrap();
+        assert_eq!(affordable(&rum, 90.0, 10, ten), 10);
+        assert_eq!(affordable(&rum, 90.0, 10, ten - 1), 9);
+        assert_eq!(affordable(&rum, 90.0, 80, u32::MAX), 60, "all it has");
+        assert_eq!(affordable(&rum, 90.0, 10, 0), 0);
     }
 
     struct Fixture {
@@ -481,6 +522,8 @@ mod tests {
         let market = app.world().get::<Market>(market).unwrap();
         assert!(market.entries[0].stock > 100.0, "production adds stock");
         assert_eq!(market.entries[1].stock, 0.0, "consumption stops at empty");
+        assert_eq!(market.entries[0].short_for, 0.0, "it makes its own");
+        assert!(market.entries[1].short_for > 0.0, "the days without count");
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! World time and the calendar. The clock only runs while the simulation
-//! does, so it stops when the game is paused.
+//! does, so it stops when the game is paused. The calendar has months but
+//! no years: the world isn't set in any one year (DESIGN.md §3).
 
 use std::fmt;
 
@@ -12,8 +13,7 @@ pub const HOUR: f64 = 3_600.0;
 /// Seconds in a day.
 pub const DAY: f64 = 24.0 * HOUR;
 
-/// The game opens on this date, in the summer of the Republic of Pirates.
-const START_YEAR: u32 = 1716;
+/// The game opens on this date, at the start of the summer.
 const START_MONTH: u32 = 6;
 const START_DAY: u32 = 1;
 const START_HOUR: f64 = 8.0;
@@ -62,7 +62,6 @@ impl WorldClock {
 /// A calendar date and time of day.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GameDate {
-    pub year: u32,
     /// 1 to 12.
     pub month: u32,
     /// 1 to 31.
@@ -77,24 +76,19 @@ impl GameDate {
         let since_midnight = elapsed + START_HOUR * HOUR;
         let mut days = (since_midnight / DAY).floor() as u32;
         let seconds_today = since_midnight.rem_euclid(DAY);
-        let (mut year, mut month, mut day) = (START_YEAR, START_MONTH, START_DAY);
+        let (mut month, mut day) = (START_MONTH, START_DAY);
         // Walk forward a month at a time; games span years, not millennia.
         loop {
-            let left_in_month = days_in_month(year, month) - day + 1;
+            let left_in_month = days_in_month(month) - day + 1;
             if days < left_in_month {
                 day += days;
                 break;
             }
             days -= left_in_month;
             day = 1;
-            month += 1;
-            if month > 12 {
-                month = 1;
-                year += 1;
-            }
+            month = month % 12 + 1;
         }
         Self {
-            year,
             month,
             day,
             hour: (seconds_today / HOUR) as u32,
@@ -104,14 +98,9 @@ impl GameDate {
 }
 
 impl GameDate {
-    /// The day without the time: "1 June 1716".
+    /// The day without the time: "1 June".
     pub fn day_name(&self) -> String {
-        format!(
-            "{} {} {}",
-            self.day,
-            MONTHS[self.month as usize - 1],
-            self.year
-        )
+        format!("{} {}", self.day, MONTHS[self.month as usize - 1])
     }
 }
 
@@ -127,10 +116,10 @@ impl fmt::Display for GameDate {
     }
 }
 
-fn days_in_month(year: u32, month: u32) -> u32 {
-    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+/// Days in `month`. With no years there are no leap years: February
+/// always has 28.
+fn days_in_month(month: u32) -> u32 {
     match month {
-        2 if leap => 29,
         2 => 28,
         4 | 6 | 9 | 11 => 30,
         _ => 31,
@@ -155,9 +144,8 @@ mod tests {
     use super::*;
     use crate::test_support::{run_seconds, sim_app};
 
-    fn date(year: u32, month: u32, day: u32, hour: u32, minute: u32) -> GameDate {
+    fn date(month: u32, day: u32, hour: u32, minute: u32) -> GameDate {
         GameDate {
-            year,
             month,
             day,
             hour,
@@ -166,10 +154,10 @@ mod tests {
     }
 
     #[test]
-    fn the_game_opens_on_the_morning_of_the_first_of_june_1716() {
-        assert_eq!(GameDate::at(0.0), date(1716, 6, 1, 8, 0));
-        assert_eq!(GameDate::at(0.0).to_string(), "1 June 1716, 08:00");
-        assert_eq!(GameDate::at(0.0).day_name(), "1 June 1716");
+    fn the_game_opens_on_the_morning_of_the_first_of_june_in_no_year() {
+        assert_eq!(GameDate::at(0.0), date(6, 1, 8, 0));
+        assert_eq!(GameDate::at(0.0).to_string(), "1 June, 08:00");
+        assert_eq!(GameDate::at(0.0).day_name(), "1 June");
         let clock = WorldClock {
             elapsed: 2.0 * DAY + 10.0,
         };
@@ -182,24 +170,19 @@ mod tests {
 
     #[test]
     fn hours_roll_over_into_the_next_day() {
-        assert_eq!(GameDate::at(16.0 * HOUR), date(1716, 6, 2, 0, 0));
-        assert_eq!(GameDate::at(90.0 * 60.0), date(1716, 6, 1, 9, 30));
+        assert_eq!(GameDate::at(16.0 * HOUR), date(6, 2, 0, 0));
+        assert_eq!(GameDate::at(90.0 * 60.0), date(6, 1, 9, 30));
     }
 
     #[test]
-    fn months_and_years_roll_over() {
+    fn months_roll_over_into_the_new_year_and_round_again() {
         // June has 30 days.
-        assert_eq!(GameDate::at(30.0 * DAY), date(1716, 7, 1, 8, 0));
-        // June through December 1716 is 214 days.
-        assert_eq!(GameDate::at(214.0 * DAY), date(1717, 1, 1, 8, 0));
-    }
-
-    #[test]
-    fn leap_years_follow_the_gregorian_rule() {
-        assert_eq!(days_in_month(1716, 2), 29);
-        assert_eq!(days_in_month(1717, 2), 28);
-        assert_eq!(days_in_month(1700, 2), 28);
-        assert_eq!(days_in_month(1600, 2), 29);
+        assert_eq!(GameDate::at(30.0 * DAY), date(7, 1, 8, 0));
+        // June through December is 214 days.
+        assert_eq!(GameDate::at(214.0 * DAY), date(1, 1, 8, 0));
+        // A year of 365 days later, it's 1 June again: no leap years.
+        assert_eq!(GameDate::at(365.0 * DAY), date(6, 1, 8, 0));
+        assert_eq!(days_in_month(2), 28);
     }
 
     #[test]

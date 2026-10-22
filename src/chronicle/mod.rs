@@ -61,11 +61,13 @@ struct Noting;
 
 pub struct ChroniclePlugin {
     pub run: Run,
+    /// The seed the world's dice were cast from, if it was given one.
+    pub seed: Option<u64>,
 }
 
 impl Plugin for ChroniclePlugin {
     fn build(&self, app: &mut App) {
-        begin(self.run);
+        begin(self.run, self.seed);
         crash::install();
         noting(app, self.run);
         app.add_systems(Last, write_out.after(Noting));
@@ -90,9 +92,11 @@ pub(crate) fn noting(app: &mut App, run: Run) {
 /// resource because the panic hook and the log layer need it too, and
 /// they have no world to look in.
 static SINK: LazyLock<Mutex<Sink>> = LazyLock::new(|| {
+    let started = chronicle::now();
     Mutex::new(Sink {
         began: Instant::now(),
-        started: chronicle::now(),
+        started,
+        name: chronicle::log_name(started, Run::Play, 0),
         run: Run::Play,
         day: 0.0,
         recent: VecDeque::new(),
@@ -102,8 +106,10 @@ static SINK: LazyLock<Mutex<Sink>> = LazyLock::new(|| {
 
 struct Sink {
     began: Instant,
-    /// When the run began, seconds since the Unix epoch: it names the log.
+    /// When the run began, seconds since the Unix epoch.
     started: u64,
+    /// The name of the run's log, which names its other files too.
+    name: String,
     run: Run,
     /// The game day of the latest record.
     day: f64,
@@ -144,10 +150,8 @@ impl Sink {
     }
 
     /// The name of the run's files, without an extension.
-    fn stem(&self) -> String {
-        chronicle::log_name(self.started, self.run)
-            .trim_end_matches(".jsonl")
-            .to_string()
+    fn stem(&self) -> &str {
+        self.name.trim_end_matches(".jsonl")
     }
 }
 
@@ -158,20 +162,23 @@ fn sink() -> MutexGuard<'static, Sink> {
 
 /// Starts the run: opens its log, with the `chronicle` feature, and heads
 /// it.
-fn begin(run: Run) {
+fn begin(run: Run, seed: Option<u64>) {
     let mut sink = sink();
     sink.run = run;
     sink.began = Instant::now();
     sink.started = chronicle::now();
+    sink.name = chronicle::log_name(sink.started, run, 0);
     #[cfg(feature = "chronicle")]
-    {
-        sink.file = world::open_log(&chronicle::log_name(sink.started, run));
+    if let Some((name, file)) = world::open_log(sink.started, run) {
+        sink.name = name;
+        sink.file = Some(file);
     }
     let header = Record::Header {
         format: FORMAT,
         version: env!("CARGO_PKG_VERSION").to_string(),
         run,
         started: sink.started,
+        seed,
     };
     sink.write(0.0, header);
     sink.flush();
@@ -270,6 +277,7 @@ mod tests {
         let mut sink = Sink {
             began: Instant::now(),
             started: 0,
+            name: chronicle::log_name(0, Run::Soak, 0),
             run: Run::Soak,
             day: 0.0,
             recent: VecDeque::new(),

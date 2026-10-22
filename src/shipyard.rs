@@ -2,12 +2,15 @@
 //! ones.
 //!
 //! All of them happen at a port with a shipyard, and take effect at once,
-//! so they work while paused.
+//! so they work while paused. The other captains' ships are refitted
+//! while they lie at a yard, a little each day, at their owners' charge.
 
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 
 use crate::alert::InSight;
 use crate::cargo::{Hold, Purse};
+use crate::clock::DAY;
 use crate::combat::{FireControl, Timbers};
 use crate::crew::{Complement, Crew};
 use crate::economy::Refusal;
@@ -18,7 +21,7 @@ use crate::player::Player;
 use crate::port::{Docked, Location, Port};
 use crate::prizes::{Prize, reassign_prizes};
 use crate::sailing::Rigging;
-use crate::schedule::FrameSet;
+use crate::schedule::{FrameSet, SimSet};
 use crate::ship_class::ShipClass;
 
 /// Cost to make good a whole hull, or a whole rig, as fractions of the
@@ -29,6 +32,9 @@ const RIG_REPAIR: f64 = 0.2;
 const PRIZE_DISCOUNT: f64 = 0.6;
 /// Her cargo fetches this fraction of its base price, sold with her.
 const CARGO_DISCOUNT: f64 = 0.5;
+/// How much of a whole hull and rig a yard makes good in a day on the other
+/// captains' ships: a wreck is sound again in a couple of days in port.
+const REFIT_PER_DAY: f32 = 0.5;
 
 /// Order a docked ship repaired, timbers and rigging both.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,7 +146,8 @@ impl Plugin for ShipyardPlugin {
             .add_systems(
                 Update,
                 (repair, sell_prizes, take_command, buy_ships).in_set(FrameSet::Orders),
-            );
+            )
+            .add_systems(FixedUpdate, refit.in_set(SimSet::Economy));
     }
 }
 
@@ -161,6 +168,43 @@ fn repair(
         purse.0 -= cost;
         timbers.0 = 1.0;
         rigging.0 = 1.0;
+    }
+}
+
+/// The other captains' ships: not the player's, and not prizes.
+type OthersShips = (Without<Player>, Without<Prize>);
+
+/// A ship offered in part exchange, with her owner's hold and purse.
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct PartExchanged {
+    docked: &'static Docked,
+    class: &'static ShipClass,
+    timbers: &'static Timbers,
+    rigging: &'static Rigging,
+    hold: &'static mut Hold,
+    crew: &'static Crew,
+    purse: &'static mut Purse,
+}
+
+/// The other captains' ships lying at a yard are made good, a little at a
+/// time. The player pays for her repairs, and prizes are sold as they lie.
+fn refit(
+    time: Res<Time>,
+    ports: Query<&Port>,
+    mut ships: Query<(&Docked, &mut Timbers, &mut Rigging), OthersShips>,
+) {
+    let mended = REFIT_PER_DAY * (time.delta_secs_f64() / DAY) as f32;
+    for (docked, mut timbers, mut rigging) in &mut ships {
+        if !ports.get(docked.port).is_ok_and(has_shipyard) {
+            continue;
+        }
+        if timbers.0 < 1.0 {
+            timbers.0 = (timbers.0 + mended).min(1.0);
+        }
+        if rigging.0 < 1.0 {
+            rigging.0 = (rigging.0 + mended).min(1.0);
+        }
     }
 }
 
@@ -253,19 +297,19 @@ fn buy_ships(
     mut orders: MessageReader<BuyShip>,
     goods: Res<Goods>,
     ports: Query<&Port>,
-    mut ships: Query<(
-        &Docked,
-        &ShipClass,
-        (&Timbers, &Rigging),
-        &mut Hold,
-        &Crew,
-        &mut Purse,
-    )>,
+    mut ships: Query<PartExchanged>,
     mut commands: Commands,
 ) {
     for order in orders.read() {
-        let Ok((docked, old, (timbers, rigging), mut hold, crew, mut purse)) =
-            ships.get_mut(order.ship)
+        let Ok(PartExchangedItem {
+            docked,
+            class: old,
+            timbers,
+            rigging,
+            mut hold,
+            crew,
+            mut purse,
+        }) = ships.get_mut(order.ship)
         else {
             continue;
         };
@@ -293,6 +337,50 @@ mod tests {
     use super::*;
     use crate::combat::Battery;
     use crate::sailing::Hull;
+    use crate::test_support::{run_seconds, sim_app};
+    use crate::time_scale::MAX_STEP;
+
+    #[test]
+    fn the_other_captains_ships_are_refitted_at_a_yard_and_the_players_is_not() {
+        let mut app = sim_app();
+        app.world_mut()
+            .resource_mut::<Time<Fixed>>()
+            .set_timestep_seconds(MAX_STEP);
+        let at = |app: &mut App, port: Port| app.world_mut().spawn(port).id();
+        let (yard, no_yard) = (
+            at(&mut app, yard()),
+            at(
+                &mut app,
+                Port {
+                    locations: vec![Location::Market],
+                    ..yard()
+                },
+            ),
+        );
+        let battered = |app: &mut App, port, player| {
+            let mut ship = app
+                .world_mut()
+                .spawn((Docked { port }, Timbers(0.1), Rigging(0.3)));
+            if player {
+                ship.insert(Player);
+            }
+            ship.id()
+        };
+        let other = battered(&mut app, yard, false);
+        let elsewhere = battered(&mut app, no_yard, false);
+        let player = battered(&mut app, yard, true);
+        run_seconds(&mut app, (3.0 * DAY) as f32);
+        let world = app.world();
+        let sound = |ship| {
+            (
+                world.get::<Timbers>(ship).unwrap().0,
+                world.get::<Rigging>(ship).unwrap().0,
+            )
+        };
+        assert_eq!(sound(other), (1.0, 1.0));
+        assert_eq!(sound(elsewhere), (0.1, 0.3), "no yard, no refit");
+        assert_eq!(sound(player), (0.1, 0.3), "she pays for hers");
+    }
 
     #[test]
     fn a_sound_ship_needs_no_repairs_and_a_wreck_costs_most() {

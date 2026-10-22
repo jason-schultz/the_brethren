@@ -44,11 +44,6 @@ required-features = ["chronicle"]
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
-[workspace.lints.clippy]
-# Bevy systems routinely take many params and complex query types.
-too_many_arguments = "allow"
-type_complexity = "allow"
-
 [lints]
 workspace = true
 

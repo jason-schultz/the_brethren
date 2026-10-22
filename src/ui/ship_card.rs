@@ -4,23 +4,21 @@
 //! can only be heard: in a tavern, from a group the captain serves, or from
 //! the merchant herself when she's hired the captain to escort her.
 
+use bevy::ecs::query::QueryData;
 use bevy::picking::hover::HoverMap;
 use bevy::picking::pointer::PointerId;
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 
 use super::hud::{BAR, TEXT, show_text};
-use super::{calling, compass_point, nearest_port, stakes_line, tale_text};
+use super::{Tales, calling, compass_point, stakes_line};
 use crate::alert::SIGHTING_RANGE;
 use crate::allegiance::{Favour, stakes};
-use crate::camera::{CameraRig, near_cursor};
-use crate::clock::WorldClock;
+use crate::camera::Pointer;
 use crate::combat::Battery;
 use crate::controls::{Control, used};
 use crate::economy::market::Market;
 use crate::escorts::Escort;
-use crate::factions::{Colours, GroupKind, Nation, Relations, Serves, nations};
-use crate::goods::Goods;
+use crate::factions::{Flag, GroupKind, Nation, Relations, nations};
 use crate::hunting::{Hunter, Mark, is_quarry};
 use crate::math::MPS_TO_KNOTS;
 use crate::player::Player;
@@ -84,16 +82,15 @@ fn spawn_card(mut commands: Commands) {
 /// nor through the HUD.
 fn select_ship(
     buttons: Res<ButtonInput<MouseButton>>,
-    window: Single<&Window, With<PrimaryWindow>>,
-    camera: Single<(&Camera, &GlobalTransform), With<CameraRig>>,
+    pointer: Pointer,
     hovered: Res<HoverMap>,
     at_sea: Query<(), (With<Player>, Without<Docked>)>,
-    ships: Query<(Entity, &Transform), (With<Hull>, Without<Player>, Without<Docked>)>,
+    ships: Query<(Entity, &Transform), OthersUnderSail>,
     wrecks: Query<(Entity, &Transform), With<Wreck>>,
     mut pressed_at: Local<Option<Vec2>>,
     mut selected: ResMut<Selected>,
 ) {
-    let Some(cursor) = window.cursor_position() else {
+    let Some(cursor) = pointer.cursor() else {
         return;
     };
     if buttons.just_pressed(MouseButton::Left) {
@@ -111,11 +108,10 @@ fn select_ship(
     if dragged || over_hud || at_sea.is_empty() {
         return;
     }
-    let (camera, camera_transform) = *camera;
     selected.0 = ships
         .iter()
         .chain(&wrecks)
-        .find(|(_, at)| near_cursor(camera, camera_transform, cursor, at.translation))
+        .find(|(_, at)| pointer.near(at.translation))
         .map(|(ship, _)| ship);
 }
 
@@ -218,26 +214,31 @@ fn wreck_text(name: &str, wreck: &Wreck, distance: f32, word: Option<String>) ->
     lines.join("\n")
 }
 
+/// A ship in sight, as her card describes her.
+#[derive(QueryData)]
+struct Sighted {
+    name: &'static Name,
+    class: &'static ShipClass,
+    battery: &'static Battery,
+    flag: Flag,
+    at: &'static Transform,
+    heading: &'static Heading,
+    speed: &'static Speed,
+}
+
+/// Other ships under sail than the player's.
+type OthersUnderSail = (With<Hull>, Without<Player>, Without<Docked>);
+
 fn show_card(
     mut selected: ResMut<Selected>,
-    ships: Query<(
-        (
-            &Name,
-            &ShipClass,
-            &Battery,
-            Option<&Colours>,
-            Option<&Serves>,
-        ),
-        (&Transform, &Heading, &Speed),
-    )>,
+    ships: Query<Sighted>,
     docked: Query<(), With<Docked>>,
     wrecks: Query<(&Name, &Transform, &Wreck)>,
     player: Single<(Entity, &Transform, &Knowledge), With<Player>>,
     escorts: Query<&Escort>,
     ports: Query<(&Name, &Port, &Market, &Favour)>,
-    anchorages: Query<(&Name, &Transform), With<Port>>,
-    names: Query<&Name>,
-    (goods, relations, clock): (Res<Goods>, Res<Relations>, Res<WorldClock>),
+    tales: Tales,
+    relations: Res<Relations>,
     mut text: Single<(&mut Text, &mut Node), With<CardText>>,
 ) {
     let (me, my_position, knowledge) = *player;
@@ -251,21 +252,14 @@ fn show_card(
         show_text(&mut text, String::new());
         return;
     };
-    let port_name = |port| names.get(port).map_or("?", Name::as_str);
+    let port_name = |port| tales.name(port);
     let heard = |tale: &Tale| {
         let source = match tale.heard {
             Heard::Saw => "You saw it".to_string(),
             Heard::Tavern(port) => format!("Word in {}", port_name(port)),
             Heard::Service(group) => format!("Word from {group}"),
         };
-        let told = tale_text(
-            &goods,
-            tale,
-            clock.elapsed,
-            |entity| port_name(entity).to_string(),
-            |at| nearest_port(&anchorages, at),
-        );
-        format!("{source}: {told}")
+        format!("{source}: {}", tales.tell(tale))
     };
     if let Ok((name, lies, wreck)) = wrecks.get(ship) {
         let word = knowledge
@@ -279,10 +273,19 @@ fn show_card(
         show_text(&mut text, wreck_text(name.as_str(), wreck, distance, word));
         return;
     }
-    let Ok(((name, class, battery, colours, serves), (at, heading, speed))) = ships.get(ship)
+    let Ok(SightedItem {
+        name,
+        class,
+        battery,
+        flag,
+        at,
+        heading,
+        speed,
+    }) = ships.get(ship)
     else {
         return;
     };
+    let (colours, serves) = (flag.colours, flag.serves);
     let colours = colours.map(|colours| colours.0);
     let tale = knowledge.latest_about(ship);
     let sailed = tale.and_then(|tale| match &tale.event {
@@ -296,7 +299,7 @@ fn show_card(
             bound_for,
         } => {
             let (port, held, market, favour) = ports.get(bound_for).ok()?;
-            let stakes = stakes(&goods, good, quantity, held.flag, market, favour);
+            let stakes = stakes(&tales.goods, good, quantity, held.flag, market, favour);
             Some(stakes_line(port.as_str(), held.flag, colours, stakes))
         }
         Purpose::Cruising => {

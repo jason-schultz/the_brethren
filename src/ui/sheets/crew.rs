@@ -1,6 +1,7 @@
 //! The crew sheet: the men and their morale, the officers, and prisoners
 //! who might sign on.
 
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 
 use super::{SheetAction, act, close_row, closing_hint, is_open};
@@ -184,15 +185,33 @@ fn build(view: &View, hint: String) -> Panel<SheetAction> {
     Panel::new("Crew", hint, rows)
 }
 
+/// The player's ship's company, as the crew sheet shows it.
+#[derive(QueryData)]
+struct Muster {
+    entity: Entity,
+    crew: &'static Crew,
+    complement: &'static Complement,
+    hold: &'static Hold,
+    purse: &'static Purse,
+    docked: Option<&'static Docked>,
+}
+
 fn refresh(
-    player: Single<(Entity, &Crew, &Complement, &Hold, &Purse, Option<&Docked>), With<Player>>,
+    player: Single<Muster, With<Player>>,
     officers: Query<(Entity, &Name, &Officer, &Berth)>,
     goods: Res<Goods>,
     bindings: Res<Bindings>,
     panel: Single<(Entity, &mut Shown<SheetAction>)>,
     mut commands: Commands,
 ) {
-    let (ship, crew, complement, hold, purse, docked) = *player;
+    let MusterItem {
+        entity: ship,
+        crew,
+        complement,
+        hold,
+        purse,
+        docked,
+    } = player.into_inner();
     let posts = posts(
         ship,
         officers

@@ -14,10 +14,9 @@ use std::collections::VecDeque;
 
 use bevy::prelude::*;
 
-use crate::combat::Engaged;
+use crate::combat::FreeAtSea;
 use crate::map::Land;
 use crate::math::direction_to_heading;
-use crate::port::Docked;
 use crate::sailing::{Helm, Sails};
 use crate::schedule::{FrameSet, SimSet};
 use route::NavGraph;
@@ -127,10 +126,7 @@ fn take_company(mut orders: MessageReader<KeepCompany>, mut commands: Commands) 
 /// Ships keeping company that have fallen behind close with their
 /// leaders. Company with a ship that's gone is over.
 fn sail_in_company(
-    ships: Query<
-        (Entity, &Company, &Transform, Option<&Route>),
-        (Without<Docked>, Without<Engaged>),
-    >,
+    ships: Query<(Entity, &Company, &Transform, Option<&Route>), FreeAtSea>,
     leaders: Query<&Transform>,
     mut orders: MessageWriter<SailOrder>,
     mut commands: Commands,

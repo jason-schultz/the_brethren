@@ -65,6 +65,10 @@ pub enum Record {
         run: Run,
         /// When the run began, seconds since the Unix epoch.
         started: u64,
+        /// The seed its dice were cast from, if it was given one: the same
+        /// seed plays the same world again.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seed: Option<u64>,
     },
     /// The run ended cleanly.
     End,
@@ -349,6 +353,12 @@ pub struct GoodState {
     pub price: f64,
     /// Whether the port uses it up rather than making it.
     pub needed: bool,
+    /// Stock it makes a day, or uses up if less than nothing.
+    #[serde(default)]
+    pub per_day: f64,
+    /// Stock convoys from home land a day, at most.
+    #[serde(default)]
+    pub convoys: f64,
 }
 
 /// A log, read back.
@@ -359,6 +369,8 @@ pub struct Log {
     pub version: String,
     /// When it began, seconds since the Unix epoch.
     pub started: u64,
+    /// The seed its dice were cast from, if it was given one.
+    pub seed: Option<u64>,
     /// Every line after the header.
     pub lines: Vec<Line>,
     /// Lines that couldn't be read: a crash's cut-off last line, or a
@@ -405,6 +417,7 @@ pub fn read(text: &str) -> Result<Log, ReadError> {
                 version,
                 run,
                 started,
+                seed,
             },
         ..
     }) = header
@@ -418,6 +431,7 @@ pub fn read(text: &str) -> Result<Log, ReadError> {
         run,
         version,
         started,
+        seed,
         lines: Vec::new(),
         skipped: Vec::new(),
     };
@@ -443,6 +457,7 @@ mod tests {
                 version: "0.1.0".into(),
                 run: Run::Soak,
                 started: 1_700_000_000,
+                seed: Some(7),
             },
         }
     }
@@ -487,8 +502,18 @@ mod tests {
         let lines = [header(FORMAT), note(1.0, "sailing is slow"), battle];
         let log = read(&log_of(&lines)).unwrap();
         assert_eq!(log.run, Run::Soak);
+        assert_eq!(log.seed, Some(7));
         assert_eq!(log.lines, lines[1..]);
         assert!(log.skipped.is_empty());
+    }
+
+    #[test]
+    fn a_log_from_before_seeds_reads_without_one() {
+        let text = format!(
+            "{{\"day\":0.0,\"real\":0.0,\"kind\":\"header\",\"format\":{FORMAT},\
+             \"version\":\"0.1.0\",\"run\":\"play\",\"started\":1}}\n"
+        );
+        assert_eq!(read(&text).unwrap().seed, None);
     }
 
     #[test]

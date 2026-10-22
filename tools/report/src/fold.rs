@@ -7,7 +7,7 @@ use chronicle::{Alarm, Battle, Happening, Line, Log, Record, Run, Snapshot};
 use serde::{Deserialize, Serialize};
 
 /// The version of the report, to know a cached one is out of date.
-pub const REPORT_FORMAT: u32 = 1;
+pub const REPORT_FORMAT: u32 = 3;
 
 /// Values over game days.
 pub type Series = Vec<(f64, f64)>;
@@ -26,6 +26,8 @@ pub struct Report {
     pub version: String,
     /// When it began, seconds since the Unix epoch.
     pub started: u64,
+    /// The seed its dice were cast from, if it was given one.
+    pub seed: Option<u64>,
     /// The game days it covered, and the real seconds they took.
     pub days: f64,
     pub real_seconds: f64,
@@ -131,6 +133,39 @@ pub struct Economy {
     pub spent: i64,
     /// Prices by port and good, "Kingston: Sugar".
     pub prices: BTreeMap<String, Series>,
+    /// What the world makes and uses of each good, by good, as the latest
+    /// snapshot had it.
+    pub supply: BTreeMap<String, Supply>,
+}
+
+/// What the ports make and use of a good a day, and what convoys from home
+/// bring them. Ships' own victualling isn't counted.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct Supply {
+    /// Made a day, by port...
+    pub made: BTreeMap<String, f64>,
+    /// ...used up, by port...
+    pub used: BTreeMap<String, f64>,
+    /// ...and landed by convoys, at most, in all.
+    pub convoys: f64,
+}
+
+impl Supply {
+    /// Made a day, in all...
+    pub fn total_made(&self) -> f64 {
+        self.made.values().sum()
+    }
+
+    /// ...and used up.
+    pub fn total_used(&self) -> f64 {
+        self.used.values().sum()
+    }
+
+    /// What's made and landed a day beyond what's used: short if less than
+    /// nothing.
+    pub fn balance(&self) -> f64 {
+        self.total_made() + self.convoys - self.total_used()
+    }
 }
 
 /// How a play session's real time went, and what was used in it.
@@ -200,6 +235,7 @@ pub fn fold(log: &Log) -> Report {
         run: log.run,
         version: log.version.clone(),
         started: log.started,
+        seed: log.seed,
         days: 0.0,
         real_seconds: 0.0,
         ended: false,
@@ -390,6 +426,7 @@ impl Timelines {
         self.entities.push((day, f64::from(snapshot.entities)));
         self.news.push((day, f64::from(snapshot.news)));
         self.open_jobs.push((day, f64::from(snapshot.open_jobs)));
+        economy.supply.clear();
         for port in &snapshot.ports {
             for good in &port.goods {
                 plot(
@@ -398,6 +435,13 @@ impl Timelines {
                     day,
                     good.price,
                 );
+                let supply = economy.supply.entry(good.good.clone()).or_default();
+                if good.per_day > 0.0 {
+                    supply.made.insert(port.port.clone(), good.per_day);
+                } else if good.per_day < 0.0 {
+                    supply.used.insert(port.port.clone(), -good.per_day);
+                }
+                supply.convoys += good.convoys;
             }
         }
     }
@@ -417,6 +461,7 @@ pub(crate) mod tests {
             run: Run::Play,
             version: "0.1.0".into(),
             started: 1_700_000_000,
+            seed: None,
             lines,
             skipped: Vec::new(),
         }

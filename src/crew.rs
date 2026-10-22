@@ -7,6 +7,7 @@
 //! works slowly and deserts in port, and a mutinous one is ripe for a
 //! ringleader (see `loyalty`).
 
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -279,18 +280,28 @@ impl Plugin for CrewPlugin {
 /// many hands sail a prize as well as a full crew would.
 pub const PRIZE_HANDS: u32 = 2;
 
+/// The hands working a ship's sails, and what they can work.
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct Hands {
+    crew: &'static Crew,
+    complement: &'static Complement,
+    prize: Has<Prize>,
+    afterguard: Option<&'static Afterguard>,
+    handling: &'static mut SailHandling,
+}
+
 /// Sets how much sail each crew can work: her numbers, how hard the men
 /// work, and her sailing master's skill.
-fn man_the_sails(
-    mut ships: Query<(
-        &Crew,
-        &Complement,
-        Has<Prize>,
-        Option<&Afterguard>,
-        &mut SailHandling,
-    )>,
-) {
-    for (crew, complement, prize, afterguard, mut handling) in &mut ships {
+fn man_the_sails(mut ships: Query<Hands>) {
+    for HandsItem {
+        crew,
+        complement,
+        prize,
+        afterguard,
+        mut handling,
+    } in &mut ships
+    {
         let needed = if prize { PRIZE_HANDS } else { complement.min };
         let skill = afterguard.map_or(1.0, Afterguard::sailing);
         handling.set_if_neq(SailHandling(

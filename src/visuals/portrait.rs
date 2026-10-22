@@ -126,7 +126,7 @@ fn build_stage(
     ));
 }
 
-/// A captain of about 1716: tricorn, long coat, breeches, and boots, built
+/// A captain of the pirates' golden age: tricorn, long coat, breeches, and boots, built
 /// from simple shapes.
 fn captain(
     meshes: &mut Assets<Mesh>,

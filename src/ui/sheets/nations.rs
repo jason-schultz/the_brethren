@@ -126,12 +126,16 @@ fn build(
     for &(name, flag, favour) in ports {
         rows.push(Row::text(
             Style::Body,
-            format!("{name}: {}", mood_line(flag, favour)),
+            format!(
+                "{name} ({}): {}",
+                favour.tier.name(),
+                mood_line(flag, favour)
+            ),
         ));
     }
     rows.push(Row::text(
         Style::Faded,
-        "Ports favour whoever brings what they need, under the colours she flies. A restless port goes over to the nation it favours when her ship is in harbour.",
+        "Ports favour whoever brings what they need, under the colours she flies. A restless port goes over to the nation it favours when one of her armed ships lies in its roads. Capitals hold through all but the worst neglect; havens change hands often.",
     ));
     rows.push(Row::text(Style::Heading, "What moves standing"));
     let points = |kind: DeedKind| kind.standing();

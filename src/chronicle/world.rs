@@ -5,15 +5,16 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
-use std::io::BufWriter;
+use std::io::{BufWriter, ErrorKind};
 
 use bevy::prelude::*;
 use chronicle::{
     Captain, Fleet, GoodState, GroupStanding, Happening as Kind, LOGS, Pair, PortState, RUNS_KEPT,
-    RUNS_MAX_BYTES, Record, Snapshot, prune, user_file,
+    RUNS_MAX_BYTES, Record, Run, Snapshot, log_name, prune, user_file,
 };
 
 use super::{Chronicle, Note, Noting, Roles, new_day, role};
+use crate::allegiance::{Favour, convoys_per_day};
 use crate::cargo::{Hold, Purse};
 use crate::clock::{DAY, WorldClock};
 use crate::combat::Timbers;
@@ -51,22 +52,36 @@ pub(super) fn plugin(app: &mut App) {
     );
 }
 
-/// Opens the log called `name` in the logs folder, and prunes the oldest.
-pub(super) fn open_log(name: &str) -> Option<BufWriter<File>> {
+/// The most runs that can begin in one second, each with a log of its own.
+const SAME_SECOND: u32 = 99;
+
+/// Opens a new log for a run begun at `started`, and prunes the oldest.
+/// It never opens one already there: a run begun the same second takes
+/// the next name. Returns the log and its name.
+pub(super) fn open_log(started: u64, run: Run) -> Option<(String, BufWriter<File>)> {
     let folder = user_file(LOGS);
-    let opened = fs::create_dir_all(&folder).and_then(|()| File::create(folder.join(name)));
-    match opened {
-        Ok(file) => {
-            if let Err(error) = prune(&folder, RUNS_KEPT, RUNS_MAX_BYTES) {
-                warn!("couldn't prune the old logs: {error}");
+    if let Err(error) = fs::create_dir_all(&folder) {
+        warn!("couldn't open the log: {error}");
+        return None;
+    }
+    for nth in 0..SAME_SECOND {
+        let name = log_name(started, run, nth);
+        match File::create_new(folder.join(&name)) {
+            Ok(file) => {
+                if let Err(error) = prune(&folder, RUNS_KEPT, RUNS_MAX_BYTES) {
+                    warn!("couldn't prune the old logs: {error}");
+                }
+                return Some((name, BufWriter::new(file)));
             }
-            Some(BufWriter::new(file))
-        }
-        Err(error) => {
-            warn!("couldn't open the log: {error}");
-            None
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                warn!("couldn't open the log: {error}");
+                return None;
+            }
         }
     }
+    warn!("couldn't open the log: {SAME_SECOND} runs began this second");
+    None
 }
 
 /// Notes each piece of news as it goes in the ledger.
@@ -234,7 +249,7 @@ type PlayerShip<'a> = (
 fn snapshot(
     player: Query<PlayerShip, With<Player>>,
     ships: Query<(Option<&Colours>, Roles), With<ShipClass>>,
-    ports: Query<(&Name, &Port, &Market)>,
+    ports: Query<(&Name, &Port, &Favour, &Market)>,
     open_jobs: Query<(), (With<Job>, Without<Carrier>)>,
     entities: Query<()>,
     names: Query<&Name>,
@@ -277,7 +292,7 @@ fn snapshot(
     }
     let mut ports: Vec<PortState> = ports
         .iter()
-        .map(|(name, port, market)| PortState {
+        .map(|(name, port, favour, market)| PortState {
             port: name.to_string(),
             flag: port.flag.to_string(),
             goods: market
@@ -291,6 +306,8 @@ fn snapshot(
                         target: entry.target,
                         price: unit_price(good.base_price, entry.stock, entry.target),
                         needed: entry.is_needed(),
+                        per_day: entry.per_day,
+                        convoys: convoys_per_day(favour.tier, port.flag, entry),
                     }
                 })
                 .collect(),

@@ -3,6 +3,7 @@
 //! A port entity's `Transform` is its anchorage, where ships lie when docked.
 //! Ships dock by sailing there with [`Arrival::Dock`].
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use serde::Deserialize;
 
@@ -10,9 +11,10 @@ use crate::alert::{Alert, AlertKind};
 use crate::allegiance::{DEALS_WITH, Favour};
 use crate::clock::WorldClock;
 use crate::factions::{Colours, GroupKind, Nation, Relations, Standing};
-use crate::navigation::{Arrival, Arrived};
+use crate::navigation::{Arrival, Arrived, SailOrder};
 use crate::pardons::{Plea, SeekPardon, under_grace};
 use crate::schedule::{FrameSet, SimSet};
+use crate::word::{Purpose, Sailed};
 
 /// A town where ships can dock.
 #[derive(Component, Debug, Clone)]
@@ -64,6 +66,42 @@ pub struct Docked {
 #[derive(Message, Debug, Clone, Copy)]
 pub struct CastOff {
     pub ship: Entity,
+}
+
+/// Putting to sea from port: casting off, the course, and the word that
+/// goes round of it.
+#[derive(SystemParam)]
+pub struct PutToSea<'w> {
+    cast_offs: MessageWriter<'w, CastOff>,
+    orders: MessageWriter<'w, SailOrder>,
+    sailings: MessageWriter<'w, Sailed>,
+}
+
+impl PutToSea<'_> {
+    /// `ship` casts off for `destination`, to do `on_arrival` there. If
+    /// she's `told` of, word gets about in the port she sails from of what
+    /// she's sailed for.
+    pub fn sail(
+        &mut self,
+        ship: Entity,
+        destination: Vec3,
+        on_arrival: Arrival,
+        told: Option<(Entity, Purpose)>,
+    ) {
+        self.cast_offs.write(CastOff { ship });
+        self.orders.write(SailOrder {
+            ship,
+            destination,
+            on_arrival,
+        });
+        if let Some((from, purpose)) = told {
+            self.sailings.write(Sailed {
+                ship,
+                from,
+                purpose,
+            });
+        }
+    }
 }
 
 /// Whether `port` lets in a ship flying `colours`: not if their nations

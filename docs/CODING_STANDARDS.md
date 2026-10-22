@@ -99,6 +99,16 @@ assets/data/       # Other game data (RON): goods, ships, factions, the opening 
 
 - `cargo fmt` clean. `cargo clippy --all-targets -- -D warnings` clean.
 - No `unsafe` (enforced by `forbid` in `Cargo.toml`).
+- **Lints are never suppressed**, neither with `#[allow(...)]` nor with
+  `allow` in `Cargo.toml`. When one fires, refactor:
+  - `type_complexity`: a query tuple destructured by position becomes a
+    `#[derive(QueryData)]` struct with named fields, or a named alias.
+  - `too_many_arguments` fires above 10 (`clippy.toml`), not clippy's 7:
+    a system's parameters are its declared data dependencies, which the
+    scheduler runs on. Past 10, split a system that does two jobs, or
+    group parameters that truly belong together into a `SystemParam`
+    (like `Sea`). Never a grab-bag struct that exists only to hide the
+    count: that's refactoring for its own sake.
 - No `unwrap()`/`expect()` in game code except where an invariant makes
   failure impossible, and then use `expect("why this can't fail")`. In
   systems, prefer `let Ok(x) = query.single() else { return };` or Bevy's

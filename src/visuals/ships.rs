@@ -3,6 +3,7 @@
 //! their flags.
 
 use bevy::camera::visibility::RenderLayers;
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 
 use super::labels::{LabelStyle, WorldLabel, world_label};
@@ -95,16 +96,32 @@ fn label_ship(add: On<Add<Hull>>, names: Query<&Name>, mut commands: Commands) {
     }
 }
 
+/// A ship as her label follows her: where she is, whether she's in port
+/// or the player's, and whose colours she flies.
+#[derive(QueryData)]
+struct Labelled {
+    at: &'static Transform,
+    docked: Has<Docked>,
+    player: Has<Player>,
+    colours: Option<&'static Colours>,
+}
+
 /// Keeps each label over her ship, in the colour of the flag she flies.
 /// Ships in port and the player's own go unlabelled, and a label outlives
 /// its ship only until the next frame.
 fn follow_ships(
     mut labels: Query<(Entity, &ShipLabel, &mut WorldLabel, &mut TextColor)>,
-    ships: Query<(&Transform, Has<Docked>, Has<Player>, Option<&Colours>)>,
+    ships: Query<Labelled>,
     mut commands: Commands,
 ) {
     for (label, &ShipLabel(ship), mut world_label, mut color) in &mut labels {
-        let Ok((transform, docked, player, colours)) = ships.get(ship) else {
+        let Ok(LabelledItem {
+            at: transform,
+            docked,
+            player,
+            colours,
+        }) = ships.get(ship)
+        else {
             commands.entity(label).despawn();
             continue;
         };

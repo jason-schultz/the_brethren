@@ -13,7 +13,11 @@ pub enum SimSet {
     Physics,
     /// React to what happened this step (arrivals, docking, eating).
     Resolve,
-    /// Markets, contracts, and deliveries, once ships have docked.
+    /// Captains keep their ships fit and out of harm, before they go
+    /// about their business.
+    Seamanship,
+    /// Markets, contracts, and deliveries, once ships have docked; and
+    /// captains' business.
     Economy,
 }
 
@@ -37,6 +41,7 @@ pub(crate) fn configure_sets(app: &mut App) {
             SimSet::Combat,
             SimSet::Physics,
             SimSet::Resolve,
+            SimSet::Seamanship,
             SimSet::Economy,
         )
             .chain(),

@@ -1,4 +1,4 @@
-// The western West Indies, c. 1716: Jamaica, Cuba, Hispaniola, and the
+// The western West Indies: Jamaica, Cuba, Hispaniola, and the
 // Bahamas.
 //
 // Coordinates are (latitude, longitude) in degrees, eyeballed from modern
@@ -8,8 +8,9 @@
 // Historical notes:
 //   - Port Royal sits on the western tip of the Palisadoes, a long sand spit
 //     enclosing Kingston Harbour. The 1692 earthquake sank much of the town,
-//     and a fire in 1703 burned most of the rest. By 1716 it is a smaller
-//     town and the Royal Navy's base in the Caribbean.
+//     and a fire in 1703 burned most of the rest. In the game it stands as
+//     the smaller town after the fire, the Royal Navy's base in the
+//     Caribbean.
 //   - Kingston, founded in 1692 on the harbour's north shore, has become
 //     the island's commercial port: sugar, rum, and pimento out; provisions
 //     and manufactures in.
@@ -23,7 +24,10 @@
 //     coast, is Spain's nearest port to Jamaica. It ships hides, salt beef,
 //     and Cuban hardwood, and its guarda costas prey on English smugglers,
 //     though the town buys Jamaican manufactures all the same.
-//   - Tortuga, off Hispaniola, was the buccaneers' old haven in the 1600s.
+//   - Tortuga, off Hispaniola, was the buccaneers' old haven in the 1600s:
+//     Cayona on its south shore, where they cured meat and hides and
+//     careened their ships. In the game it is a lawless anchorage that goes
+//     to whoever looks after it.
 //   - The Bahama Banks are drawn as impassable shoals. They are only a few
 //     meters deep, and deep-water routes went around them.
 //
@@ -31,6 +35,10 @@
 // `per_day` is how fast it makes or uses that good. "Produces" covers both
 // the port's own hinterland and what off-map shipping brings it. Sailors are
 // men looking for a berth; soldiers are the garrison.
+//
+// A port's `tier` says how firmly it's held: a `Capital` is a nation's seat,
+// a `Colony` a town like most (the default), and a `Haven` a lawless
+// anchorage that changes hands often.
 (
     name: "The West Indies",
     origin: (17.9372, -76.8435),
@@ -277,6 +285,7 @@
             // The anchorage inside the harbour, off the town's north shore.
             anchorage: (17.9435, -76.8405),
             locations: [Tavern, Market, Shipyard, GovernorsHouse, MerchantsExchange],
+            tier: Capital,
             // The navy's base: it eats stores and sends out soldiers.
             produces: [
                 (good: "soldiers", target: 120.0, per_day: 0.5, stock: 150.0),
@@ -296,6 +305,7 @@
             town: (17.9720, -76.7950),
             anchorage: (17.9600, -76.7950),
             locations: [Tavern, Market, Shipyard, MerchantsExchange],
+            tier: Colony,
             // Jamaica's produce goes out through Kingston, and the
             // island's imports come in.
             produces: [
@@ -327,9 +337,13 @@
             anchorage: (25.0815, -77.3350),
             // No governor and no exchange: business is done in the taverns.
             locations: [Tavern, Market, Shipyard],
+            // The Brethren's seat, and the one harbour where they're safe.
+            tier: Capital,
+            // The crews ashore between cruises keep the town: its garrison.
             produces: [
                 (good: "salt", target: 60.0, per_day: 3.0, stock: 60.0),
                 (good: "sailors", target: 80.0, per_day: 4.0, stock: 70.0),
+                (good: "soldiers", target: 40.0, per_day: 0.3, stock: 30.0),
             ],
             needs: [
                 (good: "provisions", target: 100.0, per_day: 4.0, stock: 25.0),
@@ -345,6 +359,7 @@
             // Off the mouth of the bay, below El Morro.
             anchorage: (19.9550, -75.8400),
             locations: [Tavern, Market, Shipyard, GovernorsHouse, MerchantsExchange],
+            tier: Capital,
             // Cattle country: hides and salt beef, Cuban hardwood, and a
             // garrison of its own.
             produces: [
@@ -361,6 +376,31 @@
                 (good: "munitions", target: 20.0, per_day: 0.6, stock: 12.0),
                 (good: "naval_stores", target: 25.0, per_day: 0.8, stock: 15.0),
                 (good: "salt", target: 30.0, per_day: 1.0, stock: 18.0),
+            ],
+        ),
+        (
+            name: "Tortuga",
+            flag: "pirates",
+            // Cayona, on the south shore.
+            town: (20.0300, -72.7500),
+            // In the channel between Tortuga and Hispaniola.
+            anchorage: (19.9850, -72.7500),
+            // A careenage, and no garrison worth the name.
+            locations: [Tavern, Market, Shipyard],
+            tier: Haven,
+            // Wild cattle and pigs, cured over the boucan, and the island's
+            // timber.
+            produces: [
+                (good: "hides", target: 40.0, per_day: 1.5, stock: 40.0),
+                (good: "provisions", target: 60.0, per_day: 2.0, stock: 60.0),
+                (good: "timber", target: 40.0, per_day: 1.5, stock: 40.0),
+                (good: "sailors", target: 20.0, per_day: 1.0, stock: 15.0),
+            ],
+            needs: [
+                (good: "rum", target: 30.0, per_day: 1.5, stock: 15.0),
+                (good: "munitions", target: 20.0, per_day: 0.5, stock: 10.0),
+                (good: "manufactures", target: 20.0, per_day: 0.5, stock: 10.0),
+                (good: "naval_stores", target: 20.0, per_day: 0.5, stock: 10.0),
             ],
         ),
     ],

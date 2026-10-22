@@ -1,5 +1,6 @@
 //! Tactical overlay drawn over the world: routes, anchorages, and the wind.
 
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 
 use super::nation_colour;
@@ -92,15 +93,28 @@ fn draw_anchorages(ports: Query<&Transform, With<Port>>, mut gizmos: Gizmos) {
     }
 }
 
+/// A ship as her marker shows her: where she is, and whose she is.
+#[derive(QueryData)]
+struct Marked {
+    at: &'static Transform,
+    is_player: Has<Player>,
+    colours: Option<&'static Colours>,
+}
+
 /// A ring around every ship, sized to the zoom: gold for the player, and
 /// the colour of her nation for every other, or grey for none.
 fn draw_ship_markers(
-    ships: Query<(&Transform, Has<Player>, Option<&Colours>), With<Hull>>,
+    ships: Query<Marked, With<Hull>>,
     rig: Single<&CameraRig>,
     mut gizmos: Gizmos,
 ) {
     let radius = rig.distance * MARKER_SCALE;
-    for (transform, is_player, colours) in &ships {
+    for MarkedItem {
+        at: transform,
+        is_player,
+        colours,
+    } in &ships
+    {
         let color = match colours {
             _ if is_player => Color::srgb(1.0, 0.85, 0.3),
             Some(colours) => nation_colour(colours.0),

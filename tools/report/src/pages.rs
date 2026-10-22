@@ -3,13 +3,13 @@
 
 use std::collections::BTreeMap;
 
-use chronicle::{Battle, Run, Side, Stamp};
+use chronicle::{Battle, Run, Side};
 use maud::{DOCTYPE, Markup, PreEscaped, html};
 
 use crate::chart::chart;
 use crate::fold::{Matchup, Report, Series};
 use crate::headline::{Measure, compare, headline, shown, shown_change};
-use crate::summary::{duration, ending, price_moves};
+use crate::summary::{balance, begun, duration, ending, per_port, price_moves, shortest_first};
 
 /// The most battles and orders listed on a run's page.
 const LISTED: usize = 100;
@@ -93,10 +93,8 @@ fn counts(title: &str, map: &BTreeMap<String, u32>) -> Markup {
 
 fn runs_line(report: &Report) -> String {
     format!(
-        "False Colours {}, {} run begun {}: {:.1} game days in {}.",
-        report.version,
-        report.run.name(),
-        Stamp::at(report.started),
+        "{}: {:.1} game days in {}.",
+        begun(report),
         report.days,
         duration(report.real_seconds)
     )
@@ -297,6 +295,19 @@ pub fn run_page(
 
             h2 { "Economy" }
             p { "The player earned " (report.economy.earned) " and spent " (report.economy.spent) " pieces of eight." }
+            @if !report.economy.supply.is_empty() {
+                h3 { "Supply and demand, by the ports, tons or heads a day" }
+                (table(
+                    &["Good", "Balance", "Made", "Convoys, at most", "Used"],
+                    shortest_first(&report.economy.supply).into_iter().map(|(good, supply)| vec![
+                        good.clone(),
+                        balance(supply),
+                        format!("{:.1} {}", supply.total_made(), per_port(&supply.made)),
+                        format!("{:.1}", supply.convoys),
+                        format!("{:.1} {}", supply.total_used(), per_port(&supply.used)),
+                    ]),
+                ))
+            }
             @let moves = price_moves(&report.economy.prices);
             @if !moves.is_empty() {
                 h3 { "Prices that moved most" }

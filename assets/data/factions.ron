@@ -1,4 +1,4 @@
-// The nations of the West Indies, c. 1716, the groups each is made of, and
+// The nations of the West Indies, the groups each is made of, and
 // what deeds done to them are worth.
 //
 // Every nation has the same three groups (its navy, its governor, and its
@@ -117,8 +117,8 @@
             ),
         ),
     ],
-    // How the nations stood in 1716, and drift back to: England and Spain
-    // at an uneasy peace since Utrecht, both preyed on by the Brethren, and
+    // How the nations stand at the start, and drift back to: England and
+    // Spain at an uneasy peace, as after Utrecht, both preyed on by the Brethren, and
     // Spain's guarda costas at war with them. Pairs not listed start at 0.
     relations: [
         ("england", "spain", -20.0),

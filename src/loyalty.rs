@@ -15,7 +15,7 @@ use bevy::prelude::*;
 use crate::alert::{Alert, AlertKind, InSight};
 use crate::cargo::Purse;
 use crate::clock::DAY;
-use crate::combat::Engaged;
+use crate::combat::FreeAtSea;
 use crate::combat::rounds::Dice;
 use crate::crew::Crew;
 use crate::economy::jobs::Carrier;
@@ -267,16 +267,16 @@ impl Captaincy<'_, '_> {
     }
 }
 
+/// The player's ship at sea and free of any fight: where a crew can rise.
+type MutinousWaters = (With<Player>, FreeAtSea);
+
 /// A crew ripe for mutiny may rise at sea, led by an ambitious officer or,
 /// past bearing, by one of their own. Put down, the ringleader goes in
 /// irons; otherwise the captain is set adrift.
 fn mutiny(
     time: Res<Time>,
     mut dice: ResMut<Dice>,
-    mut player: Query<
-        (Entity, &Transform, &Heading, &mut Crew, &Purse),
-        (With<Player>, Without<Docked>, Without<Engaged>),
-    >,
+    mut player: Query<(Entity, &Transform, &Heading, &mut Crew, &Purse), MutinousWaters>,
     mut captaincy: Captaincy,
     mut alerts: MessageWriter<Alert>,
     mut orders: MessageWriter<OfficerOrder>,

@@ -1,6 +1,7 @@
 //! The captain sheet: the captain beside his ship, how both stand, whom
 //! she serves, and the letters of introduction a new captain carries.
 
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 
 use super::{SheetAction, act, close_row, closing_hint, is_open};
@@ -180,19 +181,29 @@ fn build(view: &View, hint: String, picture: Handle<Image>) -> Panel<SheetAction
     }
 }
 
+/// The player's ship and her captain, as the captain's sheet shows them.
+#[derive(QueryData)]
+struct Flagship {
+    entity: Entity,
+    name: &'static Name,
+    class: &'static ShipClass,
+    battery: &'static Battery,
+    timbers: &'static Timbers,
+    rigging: &'static Rigging,
+    hull: &'static Hull,
+    handling: &'static SailHandling,
+    laden: &'static Laden,
+    hold: &'static Hold,
+    purse: &'static Purse,
+    crew: &'static Crew,
+    colours: Option<&'static Colours>,
+    engaged: Has<Engaged>,
+    standing: &'static Standing,
+    service: &'static Service,
+}
+
 fn refresh(
-    player: Single<
-        (
-            Entity,
-            &Name,
-            &ShipClass,
-            (&Battery, &Timbers, &Rigging),
-            (&Hull, &SailHandling, &Laden),
-            (&Hold, &Purse, &Crew),
-            (Option<&Colours>, Has<Engaged>, &Standing, &Service),
-        ),
-        With<Player>,
-    >,
+    player: Single<Flagship, With<Player>>,
     officers: Query<(&Name, &Officer, &Berth)>,
     goods: Res<Goods>,
     jobs: Query<(&Job, Option<&Carrier>)>,
@@ -202,10 +213,24 @@ fn refresh(
     panel: Single<(Entity, &mut Shown<SheetAction>)>,
     mut commands: Commands,
 ) {
-    let (ship, name, class, (battery, timbers, rigging), sailing, (hold, purse, crew), flag) =
-        *player;
-    let (colours, engaged, standing, service) = flag;
-    let (hull, handling, laden) = sailing;
+    let FlagshipItem {
+        entity: ship,
+        name,
+        class,
+        battery,
+        timbers,
+        rigging,
+        hull,
+        handling,
+        laden,
+        hold,
+        purse,
+        crew,
+        colours,
+        engaged,
+        standing,
+        service,
+    } = player.into_inner();
     let view = View {
         ship: name.as_str(),
         class,

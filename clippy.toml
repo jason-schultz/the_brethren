@@ -1,0 +1,6 @@
+# A Bevy system's parameters are its declared data dependencies, which the
+# scheduler runs on, so a system may fairly take a few more than clippy's
+# default of 7. Past 10, split a system that does two jobs, or group
+# parameters that belong together into a SystemParam. Never suppress the
+# lint (docs/CODING_STANDARDS.md §5).
+too-many-arguments-threshold = 10

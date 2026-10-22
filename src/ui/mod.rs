@@ -11,6 +11,7 @@ mod port_screen;
 mod sheets;
 mod ship_card;
 
+use bevy::ecs::system::SystemParam;
 use bevy::math::FloatOrd;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
@@ -18,7 +19,7 @@ use bevy::ui::Pressed;
 use bevy::ui_widgets::Button;
 
 use crate::allegiance::{Favour, OWNER_REST, Stakes};
-use crate::clock::{DAY, HOUR};
+use crate::clock::{DAY, HOUR, WorldClock};
 use crate::crew::days_of_provisions;
 use crate::economy::market::Trader;
 use crate::factions::{DeedKind, GroupKind, Nation, Standing, nations};
@@ -43,6 +44,20 @@ const GRUMBLING: f32 = OWNER_REST - 15.0;
 /// sight, shown in the HUD for a few seconds of real time.
 #[derive(Resource, Debug, Default)]
 pub struct Notices(Vec<(String, f32)>);
+
+/// The notices, and the real time they're posted at.
+#[derive(SystemParam)]
+pub struct Noticeboard<'w> {
+    notices: ResMut<'w, Notices>,
+    time: Res<'w, Time<Real>>,
+}
+
+impl Noticeboard<'_> {
+    /// Shows `text`, from now.
+    pub fn post(&mut self, text: impl Into<String>) {
+        self.notices.post(text, self.time.elapsed_secs());
+    }
+}
 
 impl Notices {
     /// Shows `text`, as of real time `now`.
@@ -285,6 +300,34 @@ fn tale_text(
             "{teller_name} gave an account {place} {when}: {ship} was {}.",
             fate_text(*says, blames.as_deref().unwrap_or("a stranger"))
         ),
+    }
+}
+
+/// What it takes to tell a tale: the goods, the date, and the names of
+/// ships and ports.
+#[derive(SystemParam)]
+pub(crate) struct Tales<'w, 's> {
+    pub goods: Res<'w, Goods>,
+    pub clock: Res<'w, WorldClock>,
+    names: Query<'w, 's, &'static Name>,
+    anchorages: Query<'w, 's, (&'static Name, &'static Transform), With<Port>>,
+}
+
+impl Tales<'_, '_> {
+    /// `tale`, told.
+    pub fn tell(&self, tale: &Tale) -> String {
+        tale_text(
+            &self.goods,
+            tale,
+            self.clock.elapsed,
+            |entity| self.name(entity).to_string(),
+            |at| nearest_port(&self.anchorages, at),
+        )
+    }
+
+    /// The name of a ship or port, or "?" if it has none.
+    pub fn name(&self, entity: Entity) -> &str {
+        self.names.get(entity).map_or("?", Name::as_str)
     }
 }
 

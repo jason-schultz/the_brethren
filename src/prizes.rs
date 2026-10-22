@@ -8,6 +8,7 @@
 //! spare, the plundered ship is let go. NPC captains board whoever strikes
 //! to them, and want plunder, not ships: they burn their prizes.
 
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 
 use crate::alert::{Alert, AlertKind};
@@ -16,7 +17,7 @@ use crate::combat::tactics::BOARDING_RANGE;
 use crate::combat::{Engaged, Struck, Sunk};
 use crate::crew::{Complement, Crew, PRIZE_HANDS};
 use crate::economy::jobs::{Carrier, Job};
-use crate::factions::{Colours, Deed, DeedKind, Serves};
+use crate::factions::{Colours, Deed, DeedKind, Flag};
 use crate::goods::{Carriage, Goods};
 use crate::merchants::{Merchant, Plan};
 use crate::navigation::{Arrival, Route, SailOrder, keep_company};
@@ -176,23 +177,26 @@ impl Plugin for PrizesPlugin {
     }
 }
 
+/// A ship in a boarding, captor or prize: her men, her hold and purse, and
+/// whether she's struck.
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct Boarding {
+    at: &'static Transform,
+    crew: &'static mut Crew,
+    complement: &'static Complement,
+    hold: &'static mut Hold,
+    purse: &'static mut Purse,
+    struck: Has<Struck>,
+    flag: Flag,
+    afterguard: Option<&'static Afterguard>,
+}
+
 fn board(
     mut orders: MessageReader<BoardOrder>,
     goods: Res<Goods>,
     engaged: Query<&Engaged>,
-    mut ships: Query<
-        (
-            &Transform,
-            &mut Crew,
-            &Complement,
-            &mut Hold,
-            &mut Purse,
-            Has<Struck>,
-            (Option<&Colours>, Option<&Serves>),
-            Option<&Afterguard>,
-        ),
-        Without<Sunk>,
-    >,
+    mut ships: Query<Boarding, Without<Sunk>>,
     jobs: Query<(Entity, &Carrier), With<Job>>,
     players: Query<(), With<Player>>,
     mut alerts: MessageWriter<Alert>,
@@ -214,26 +218,26 @@ fn board(
         let Ok([captor, prize]) = ships.get_many_mut([order.ship, enemy]) else {
             continue;
         };
-        let (
-            captor_at,
-            mut captor_crew,
-            captor_complement,
-            mut captor_hold,
-            mut captor_purse,
-            _,
-            _,
-            captor_officers,
-        ) = captor;
-        let (
-            prize_at,
-            mut prize_crew,
-            _,
-            mut prize_hold,
-            mut prize_purse,
+        let BoardingItem {
+            at: captor_at,
+            crew: mut captor_crew,
+            complement: captor_complement,
+            hold: mut captor_hold,
+            purse: mut captor_purse,
+            afterguard: captor_officers,
+            ..
+        } = captor;
+        let BoardingItem {
+            at: prize_at,
+            crew: mut prize_crew,
+            hold: mut prize_hold,
+            purse: mut prize_purse,
             struck,
-            (colours, serves),
-            prize_officers,
-        ) = prize;
+            flag,
+            afterguard: prize_officers,
+            ..
+        } = prize;
+        let (colours, serves) = (flag.colours, flag.serves);
         if captor_at.translation.distance(prize_at.translation) > BOARDING_RANGE {
             continue;
         }
@@ -305,12 +309,13 @@ fn board(
     }
 }
 
+/// The other captains in command of their ships: not the player, not prize
+/// crews, and not struck.
+type AiCaptains = (Without<Player>, Without<Prize>, Without<Struck>);
+
 /// NPC captains board an enemy who has struck to them, once alongside.
 fn board_the_struck(
-    captains: Query<
-        (Entity, &Engaged, &Transform),
-        (Without<Player>, Without<Prize>, Without<Struck>),
-    >,
+    captains: Query<(Entity, &Engaged, &Transform), AiCaptains>,
     struck: Query<&Transform, With<Struck>>,
     mut orders: MessageWriter<BoardOrder>,
 ) {
@@ -332,25 +337,38 @@ fn order_prizes(mut orders: MessageReader<OrderPrize>, mut prizes: Query<&mut Pr
     }
 }
 
+/// A prize, with her orders and where she is.
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct PrizeShip {
+    entity: Entity,
+    prize: &'static Prize,
+    orders: &'static PrizeOrders,
+    at: &'static Transform,
+    docked: Option<&'static Docked>,
+    route: Option<&'static Route>,
+    helm: &'static mut Helm,
+}
+
 /// Sails each prize by her orders. A prize whose captor is gone is her own
 /// ship again.
 fn sail_prizes(
-    mut prizes: Query<(
-        Entity,
-        &Prize,
-        &PrizeOrders,
-        &Transform,
-        Option<&Docked>,
-        Option<&Route>,
-        &mut Helm,
-    )>,
+    mut prizes: Query<PrizeShip>,
     captors: Query<(&Transform, Option<&Docked>)>,
     ports: Query<&Transform, With<Port>>,
     mut cast_offs: MessageWriter<CastOff>,
     mut orders: MessageWriter<SailOrder>,
     mut commands: Commands,
 ) {
-    for (prize, &Prize { captor }, &prize_orders, transform, docked, route, mut helm) in &mut prizes
+    for PrizeShipItem {
+        entity: prize,
+        prize: &Prize { captor },
+        orders: &prize_orders,
+        at: transform,
+        docked,
+        route,
+        mut helm,
+    } in &mut prizes
     {
         let Ok((captor_at, captor_docked)) = captors.get(captor) else {
             commands

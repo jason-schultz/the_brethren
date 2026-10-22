@@ -6,6 +6,8 @@ Single-player Age-of-Sail sandbox game. Rust + Bevy 0.20, 3D with a top-down cam
 - `docs/CODING_STANDARDS.md`: mandatory rules (one hot path, no duplicated logic, KISS, testing).
 - `docs/DESIGN.md`: game vision, factions, systems, roadmap.
 
+Also: `docs/ASSET_SOURCES.md`, where to find free models, sounds, music and ship plans, and their licences; `docs/MODELS.md`, the spec and workflow for 3D models (run it with `/ship-model <class>`).
+
 ## Commands
 
 ```sh

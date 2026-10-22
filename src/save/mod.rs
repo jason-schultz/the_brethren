@@ -11,6 +11,8 @@ pub mod quicksave;
 
 use std::fmt;
 
+use bevy::ecs::query::QueryData;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -242,6 +244,9 @@ pub struct PortSave {
     /// How it regards each nation.
     pub favour: Vec<(Nation, f32)>,
     pub stock: Cargo,
+    /// Days it has gone short of each good it's short of.
+    #[serde(default)]
+    pub short_for: Cargo,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -691,34 +696,53 @@ pub fn capture(world: &mut World) -> SaveGame {
         .expect("capturing reads only resources every simulation has")
 }
 
+/// A ship as a save records her: who commands her, where she is and how
+/// she's sailing, her state, and her captain's record.
+#[derive(QueryData)]
+struct SavedShip {
+    name: &'static Name,
+    class: &'static ShipClass,
+    player: Has<Player>,
+    merchant: Option<&'static Merchant>,
+    prize: Option<(&'static Prize, &'static PrizeOrders)>,
+    patrol: Option<&'static Patrol>,
+    raider: Option<&'static Raider>,
+    at: &'static Transform,
+    heading: &'static Heading,
+    speed: &'static Speed,
+    aground: &'static Aground,
+    battery: &'static Battery,
+    timbers: &'static Timbers,
+    rigging: &'static Rigging,
+    crew: &'static Crew,
+    purse: &'static Purse,
+    hold: &'static Hold,
+    colours: Option<&'static Colours>,
+    docked: Option<&'static Docked>,
+    route: Option<&'static Route>,
+    record: Option<(
+        &'static CaptainId,
+        &'static Standing,
+        &'static Service,
+        &'static Knowledge,
+    )>,
+}
+
+/// The agreements in force: contracts, with who carries them, and escorts.
+#[derive(SystemParam)]
+struct Agreements<'w, 's> {
+    jobs: Query<'w, 's, (&'static Job, Option<&'static Carrier>)>,
+    escorts: Query<'w, 's, &'static Escort>,
+}
+
 fn capture_system(
     clock: Res<WorldClock>,
     relations: Res<Relations>,
     goods: Res<Goods>,
     names: Query<&Name>,
     ports: Query<(&Name, &Port, &Favour, &Market)>,
-    ships: Query<(
-        &Name,
-        &ShipClass,
-        (
-            Has<Player>,
-            Option<&Merchant>,
-            Option<(&Prize, &PrizeOrders)>,
-            Option<&Patrol>,
-            Option<&Raider>,
-        ),
-        &Transform,
-        (&Heading, &Speed, &Aground),
-        (&Battery, &Timbers, &Rigging),
-        (&Crew, &Purse, &Hold, Option<&Colours>),
-        Option<&Docked>,
-        (
-            Option<&Route>,
-            Option<(&CaptainId, &Standing, &Service, &Knowledge)>,
-        ),
-    )>,
-    jobs: Query<(&Job, Option<&Carrier>)>,
-    escorts: Query<&Escort>,
+    ships: Query<SavedShip>,
+    agreements: Agreements,
     officers: Query<(&Name, &Officer, &Berth)>,
     wrecks: Query<(&Name, &Transform, &Wreck)>,
     ledger: Res<Ledger>,
@@ -736,23 +760,40 @@ fn capture_system(
                 .iter()
                 .map(|entry| (goods.get(entry.good).key.clone(), entry.stock))
                 .collect(),
+            short_for: market
+                .entries
+                .iter()
+                .filter(|entry| entry.short_for > 0.0)
+                .map(|entry| (goods.get(entry.good).key.clone(), entry.short_for))
+                .collect(),
         })
         .collect();
     let ships: Vec<ShipSave> = ships
         .iter()
         .filter_map(
-            |(
-                name,
-                class,
-                command,
-                transform,
-                motion,
-                fighting,
-                aboard,
-                docked,
-                (route, record),
-            )| {
-                let (player, merchant, prize, patrol, raider) = command;
+            |SavedShipItem {
+                 name,
+                 class,
+                 player,
+                 merchant,
+                 prize,
+                 patrol,
+                 raider,
+                 at: transform,
+                 heading,
+                 speed,
+                 aground,
+                 battery,
+                 timbers,
+                 rigging,
+                 crew,
+                 purse,
+                 hold,
+                 colours,
+                 docked,
+                 route,
+                 record,
+             }| {
                 let captain = match (player, merchant, prize) {
                     (true, ..) => Captain::Player,
                     (false, _, None) if let Some(raider) = raider => Captain::Raider(raider.plan),
@@ -784,9 +825,7 @@ fn capture_system(
                     // A ship nobody commands has nothing to save.
                     (false, None, None) => return None,
                 };
-                let (heading, speed, aground) = motion;
-                let (battery, timbers, rigging) = fighting;
-                let (crew, purse, hold, colours) = aboard;
+
                 Some(ShipSave {
                     name: name.to_string(),
                     class: class.name.to_string(),
@@ -833,7 +872,8 @@ fn capture_system(
             .get(ship)
             .is_ok_and(|name| saved_names.iter().any(|saved| saved == name.as_str()))
     };
-    let jobs = jobs
+    let jobs = agreements
+        .jobs
         .iter()
         .map(|(job, carrier)| JobSave {
             good: goods.get(job.good).key.clone(),
@@ -879,7 +919,8 @@ fn capture_system(
         jobs,
         // Only what names saved ships: a save naming a ship it hasn't got
         // can't be loaded.
-        escorts: escorts
+        escorts: agreements
+            .escorts
             .iter()
             .filter(|escort| {
                 (saved(escort.ward) || escort.lost_at.is_some()) && escort.escort.is_none_or(saved)
@@ -993,8 +1034,11 @@ pub fn restore(world: &mut World, save: &SaveGame) -> Result<(), LoadError> {
     let mut stocks = Vec::new();
     for port in &save.ports {
         let entity = names.port(&port.name)?;
+        // A good it isn't short of has gone short no days.
         for (key, stock) in &port.stock {
-            stocks.push((entity, good(&goods, key)?, *stock));
+            let short_for = port.short_for.iter().find(|(short, _)| short == key);
+            let short_for = short_for.map_or(0.0, |&(_, days)| days);
+            stocks.push((entity, good(&goods, key)?, *stock, short_for));
         }
     }
     let ship_names: Vec<&str> = save.ships.iter().map(|ship| ship.name.as_str()).collect();
@@ -1085,12 +1129,13 @@ pub fn restore(world: &mut World, save: &SaveGame) -> Result<(), LoadError> {
             }
         }
     }
-    for (port, good, stock) in stocks {
+    for (port, good, stock, short_for) in stocks {
         if let Some(entry) = world
             .get_mut::<Market>(port)
             .and_then(|market| market.into_inner().entry_mut(good))
         {
             entry.stock = stock;
+            entry.short_for = short_for;
         }
     }
     let old: Vec<Entity> = world
@@ -1442,6 +1487,10 @@ mod tests {
             "a ship should be under way: {save:?}"
         );
         assert!(!save.ledger.news.is_empty(), "ships have sailed: {save:?}");
+        assert!(
+            save.ports.iter().any(|port| !port.short_for.is_empty()),
+            "a port should have gone short: {save:?}"
+        );
 
         let (mut fresh, _) = new_game();
         restore(fresh.world_mut(), &save).unwrap();

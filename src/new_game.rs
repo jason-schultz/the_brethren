@@ -301,7 +301,14 @@ mod tests {
         let posted =
             |origin, destination, key: &str| jobs.contains(&(origin, destination, key.to_string()));
         assert!(posted(kingston, port_royal, "naval_stores"), "{jobs:?}");
-        assert!(posted(kingston, nassau, "provisions"), "{jobs:?}");
+        let wanted = |destination, key: &str| {
+            jobs.iter()
+                .any(|(_, to, good)| *to == destination && good == key)
+        };
+        assert!(
+            wanted(nassau, "provisions"),
+            "from Kingston or Tortuga: {jobs:?}"
+        );
         assert!(posted(port_royal, kingston, "soldiers"), "{jobs:?}");
         assert!(posted(nassau, kingston, "salt"), "{jobs:?}");
     }

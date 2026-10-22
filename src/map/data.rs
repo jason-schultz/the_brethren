@@ -2,8 +2,8 @@
 
 use serde::Deserialize;
 
+use crate::allegiance::Tier;
 use crate::factions::Nation;
-
 use crate::port::Location;
 
 /// The West Indies starting map, embedded at compile time.
@@ -61,6 +61,9 @@ pub struct PortData {
     /// Where ships lie to dock, in water.
     pub anchorage: LatLon,
     pub locations: Vec<Location>,
+    /// How firmly it's held: a colony, unless the map says otherwise.
+    #[serde(default)]
+    pub tier: Tier,
     /// Goods the port supplies, whether grown, made, or shipped in from off the map.
     pub produces: Vec<TradeData>,
     /// Goods the port uses up and must have delivered.

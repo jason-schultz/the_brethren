@@ -36,6 +36,7 @@
 //! sailings that concern the groups she serves, which they send her as
 //! news. Sailings go stale in a few days, other news in a month.
 
+use bevy::ecs::query::QueryData;
 use bevy::math::FloatOrd;
 use bevy::prelude::*;
 
@@ -44,12 +45,11 @@ use crate::clock::{DAY, WorldClock};
 use crate::combat::rounds::Dice;
 use crate::economy::jobs::deadline;
 use crate::factions::{
-    CaptainId, Colours, Deed, DeedKind, Group, GroupKind, Nation, Relations, Serves, Standing,
-    Terms, reputation,
+    CaptainId, Colours, Deed, DeedKind, Flag, Group, GroupKind, Nation, Relations, Standing, Terms,
+    reputation,
 };
 use crate::goods::{Carriage, GoodId, Goods};
-use crate::map::Land;
-use crate::navigation::route::{NavGraph, route_length};
+use crate::map::Charts;
 use crate::port::{Docked, Location, Port};
 use crate::schedule::{FrameSet, SimSet};
 use crate::service::Service;
@@ -630,7 +630,10 @@ impl Plugin for WordPlugin {
             .add_observer(tell_port)
             .add_observer(carry_news)
             // Orders work while paused, and so do the deeds they bring.
-            .add_systems(Update, (give_accounts, record_news).after(FrameSet::Orders))
+            .add_systems(
+                Update,
+                (give_accounts, (record_sailings, record_deeds).chain()).after(FrameSet::Orders),
+            )
             .add_systems(
                 FixedUpdate,
                 (post_overdue, spread_news, find_out_lies, hear_in_port)
@@ -640,48 +643,49 @@ impl Plugin for WordPlugin {
     }
 }
 
-/// Every sailing and deed goes in the ledger, with who knows of it. A
-/// group a captain serves sends her the truth of the sailings that concern
-/// it, and captains who saw a deed know it.
-pub(crate) fn record_news(
+/// A ship as the news tells of her. A port is no witness, though it has a
+/// name and a place.
+#[derive(QueryData)]
+pub(crate) struct Told {
+    entity: Entity,
+    name: &'static Name,
+    at: &'static Transform,
+    docked: Option<&'static Docked>,
+    flag: Flag,
+    captain: Option<&'static CaptainId>,
+}
+
+/// Every sailing goes in the ledger, and a group a captain serves sends
+/// her the truth of the sailings that concern it.
+fn record_sailings(
     mut sailings: MessageReader<Sailed>,
-    mut deeds: MessageReader<Deed>,
     clock: Res<WorldClock>,
     goods: Res<Goods>,
     relations: Res<Relations>,
-    (land, graph): (Res<Land>, Res<NavGraph>),
-    ships: Query<(
-        Entity,
-        &Name,
-        &Transform,
-        Option<&Docked>,
-        (Option<&Colours>, Option<&Serves>, Option<&CaptainId>),
-    )>,
-    ports: Query<(Entity, &Transform), With<Port>>,
+    charts: Charts,
+    ships: Query<Told, Without<Port>>,
     mut captains: Query<(Entity, &Service, &mut Knowledge)>,
     mut ledger: ResMut<Ledger>,
     mut alerts: MessageWriter<Alert>,
 ) {
     let now = clock.elapsed;
     for sailed in sailings.read() {
-        let Ok((_, name, _, _, (colours, serves, _))) = ships.get(sailed.ship) else {
+        let Ok(ship) = ships.get(sailed.ship) else {
             continue;
         };
         // Her last voyage is over.
         ledger.news.retain(
             |news| !matches!(news.event, Happening::Sailed { ship, .. } if ship == sailed.ship),
         );
-        let anchorage = |port| ports.get(port).ok().map(|(_, at)| at.translation);
         // Due as a contract would be: twice a slow merchantman's passage,
         // and a day.
         let due = sailed.purpose.bound_for().and_then(|bound_for| {
-            let (from, to) = (anchorage(sailed.from)?, anchorage(bound_for)?);
-            let route = graph.plan(&land, from, to);
-            Some(deadline(now, route_length(from, &route)))
+            let (from, to) = (charts.anchorage(sailed.from)?, charts.anchorage(bound_for)?);
+            Some(deadline(now, charts.passage(from, to)))
         });
         let event = Happening::Sailed {
             ship: sailed.ship,
-            name: name.to_string(),
+            name: ship.name.to_string(),
             purpose: sailed.purpose,
             due,
         };
@@ -697,8 +701,10 @@ pub(crate) fn record_news(
             Vec::new(),
         );
         let (Some(&Colours(nation)), serves) = (
-            colours,
-            serves.map_or(GroupKind::Merchants, |serves| serves.0),
+            ship.flag.colours,
+            ship.flag
+                .serves
+                .map_or(GroupKind::Merchants, |serves| serves.0),
         ) else {
             continue;
         };
@@ -728,10 +734,25 @@ pub(crate) fn record_news(
             });
         }
     }
+}
+
+/// Every deed goes in the ledger, with who knows of it: captains who saw
+/// it know it.
+pub(crate) fn record_deeds(
+    mut deeds: MessageReader<Deed>,
+    clock: Res<WorldClock>,
+    relations: Res<Relations>,
+    ships: Query<Told, Without<Port>>,
+    ports: Query<(Entity, &Transform), With<Port>>,
+    mut captains: Query<(Entity, &Service, &mut Knowledge)>,
+    mut ledger: ResMut<Ledger>,
+) {
+    let now = clock.elapsed;
     for deed in deeds.read() {
-        let Ok((_, name, at, docked, (colours, _, captain))) = ships.get(deed.doer) else {
+        let Ok(doer) = ships.get(deed.doer) else {
             continue;
         };
+        let at = doer.at;
         // Closing again on a ship she's already attacked, after a chase
         // broke off, is the same attack; taking again a ship she plundered
         // and let go is the same taking. Neither is new while the first is
@@ -748,14 +769,14 @@ pub(crate) fn record_news(
         }
         let victim = deed
             .about
-            .and_then(|ship| Some((ship, ships.get(ship).ok()?.1.to_string())));
+            .and_then(|ship| Some((ship, ships.get(ship).ok()?.name.to_string())));
         let news = DeedNews {
             kind: deed.kind,
             group: deed.group,
             doer: deed.doer,
-            doer_name: name.to_string(),
-            captain: captain.copied(),
-            colours: colours.map(|colours| colours.0),
+            doer_name: doer.name.to_string(),
+            captain: doer.captain.copied(),
+            colours: doer.flag.colours.map(|colours| colours.0),
             victim: victim.clone(),
             standing: Vec::new(),
         }
@@ -768,7 +789,7 @@ pub(crate) fn record_news(
                 taken,
                 ships
                     .iter()
-                    .map(|(ship, name, at, ..)| (ship, name, at.translation)),
+                    .map(|ship| (ship.entity, ship.name, ship.at.translation)),
             );
             ledger.note_loss(Loss {
                 ship: taken,
@@ -779,7 +800,7 @@ pub(crate) fn record_news(
                 nearby,
             });
         }
-        match docked {
+        match doer.docked {
             Some(&Docked { port }) => {
                 ledger.record(
                     now,
@@ -800,8 +821,8 @@ pub(crate) fn record_news(
                     position,
                     ships
                         .iter()
-                        .filter(|(.., docked, _)| docked.is_none())
-                        .map(|(ship, _, at, ..)| (ship, at.translation)),
+                        .filter(|ship| ship.docked.is_none())
+                        .map(|ship| (ship.entity, ship.at.translation)),
                     &[deed.doer],
                 );
                 carriers.extend(free_victim.filter(|ship| !carriers.contains(ship)));
@@ -1400,6 +1421,38 @@ mod tests {
         let known = deeds_known(&mut app, 1.0);
         assert_eq!(known.len(), 1, "England hears once: {known:?}");
         assert_eq!(known[0].nation, Nation::ENGLAND);
+    }
+
+    #[test]
+    fn a_port_beside_a_taking_is_no_witness_to_it() {
+        let (mut app, port, merchant, captain) = harbour(Nation::ENGLAND);
+        app.world_mut()
+            .entity_mut(port)
+            .insert(Name::new("Tortuga"));
+        app.world_mut()
+            .get_mut::<Transform>(captain)
+            .unwrap()
+            .translation = Vec3::new(100.0, 0.0, 0.0);
+        app.world_mut().write_message(Deed {
+            doer: captain,
+            kind: DeedKind::Captured,
+            group: Nation::ENGLAND.groups()[2],
+            about: Some(merchant),
+        });
+        app.update();
+        let ledger = app.world().resource::<Ledger>();
+        let nearby: Vec<Entity> = ledger.losses[0]
+            .nearby
+            .iter()
+            .map(|(ship, _)| *ship)
+            .collect();
+        assert_eq!(nearby, [captain]);
+        assert!(
+            ledger
+                .news
+                .iter()
+                .all(|news| !news.carriers.contains(&port))
+        );
     }
 
     #[test]

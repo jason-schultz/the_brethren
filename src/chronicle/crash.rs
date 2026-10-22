@@ -59,7 +59,7 @@ fn report(info: &PanicHookInfo) {
     );
     sink.flush();
     let text = crash_report(&sink, &message, &backtrace);
-    match write_report(&sink.stem(), &text) {
+    match write_report(sink.stem(), &text) {
         Ok(path) => eprintln!("False Colours crashed: see {}", path.display()),
         Err(error) => eprintln!("False Colours crashed, and couldn't write a report: {error}"),
     }
@@ -198,6 +198,7 @@ mod tests {
         let mut sink = Sink {
             began: Instant::now(),
             started: 1_700_000_000,
+            name: chronicle::log_name(1_700_000_000, Run::Play, 0),
             run: Run::Play,
             day: 0.0,
             recent: VecDeque::new(),

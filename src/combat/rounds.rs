@@ -106,6 +106,16 @@ impl Default for Dice {
 }
 
 impl Dice {
+    /// A cup whose rolls follow from `seed`: the same seed, the same world.
+    pub fn seeded(seed: u64) -> Self {
+        // SplitMix64 scatters neighbouring seeds, and xorshift needs a
+        // state that isn't zero.
+        let mut x = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        Self((x ^ (x >> 31)).max(1))
+    }
+
     /// A roll in `[0, 1)`.
     pub fn roll(&mut self) -> f32 {
         let mut x = self.0;
@@ -231,6 +241,18 @@ mod tests {
         assert!(rolls.iter().all(|r| (0.0..1.0).contains(r)));
         let mean = rolls.iter().sum::<f32>() / rolls.len() as f32;
         assert!((0.4..0.6).contains(&mean), "mean {mean}");
+    }
+
+    #[test]
+    fn a_seed_always_rolls_the_same_and_another_seed_differently() {
+        let rolls = |seed| {
+            let mut dice = Dice::seeded(seed);
+            [dice.roll(), dice.roll(), dice.roll()]
+        };
+        assert_eq!(rolls(7), rolls(7));
+        assert_ne!(rolls(7), rolls(8));
+        let mut zero = Dice::seeded(0);
+        assert!((0..10).map(|_| zero.roll()).any(|roll| roll > 0.0));
     }
 
     #[test]

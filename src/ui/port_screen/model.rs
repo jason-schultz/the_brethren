@@ -769,6 +769,7 @@ mod tests {
             stock,
             target: 100.0,
             per_day,
+            short_for: 0.0,
         };
         let market = Market {
             entries: vec![

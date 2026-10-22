@@ -13,6 +13,8 @@
 //! Running aground hard enough holes a ship, and a ship sailing near
 //! shoals may strike a reef. Either can sink her.
 
+use bevy::ecs::query::QueryData;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::alert::{Alert, AlertKind};
@@ -22,7 +24,7 @@ use crate::combat::rounds::Dice;
 use crate::combat::{Engaged, Timbers};
 use crate::crew::{Complement, Crew};
 use crate::economy::jobs::Carrier;
-use crate::factions::{Colours, Deed, DeedKind, Group, GroupKind, Nation, Serves};
+use crate::factions::{Colours, Deed, DeedKind, Flag, Group, GroupKind, Nation};
 use crate::goods::{Carriage, Goods};
 use crate::loyalty::{Boat, Captaincy, chance_in};
 use crate::map::Land;
@@ -138,29 +140,35 @@ pub fn wreck_name<'a>(ship: &str, wrecks: impl Iterator<Item = &'a Name> + Clone
         .expect("there's always a free number")
 }
 
-/// The wrecks worth diving on that are talked of at `port`, of `wrecks`,
-/// nearest `at` first.
-pub fn wrecks_known_at(
-    ledger: &Ledger,
-    port: Entity,
-    at: Vec3,
-    wrecks: &Query<(Entity, &Transform, &Wreck)>,
-) -> Vec<(Entity, Vec3)> {
-    let mut known: Vec<(Entity, Vec3)> = ledger
-        .news
-        .iter()
-        .filter(|news| news.known_at.contains(&port))
-        .filter_map(|news| match news.event {
-            Happening::Wrecked {
-                wreck: Some(wreck), ..
-            } => wrecks.get(wreck).ok(),
-            _ => None,
-        })
-        .filter(|(_, _, wreck)| wreck.has_anything())
-        .map(|(wreck, lies, _)| (wreck, lies.translation))
-        .collect();
-    known.sort_by(|a, b| a.1.distance(at).total_cmp(&b.1.distance(at)));
-    known
+/// The wrecks, and what's said of them in the ledger: how captains learn
+/// of wrecks worth diving on, or guarding.
+#[derive(SystemParam)]
+pub struct WreckTalk<'w, 's> {
+    pub ledger: Res<'w, Ledger>,
+    pub wrecks: Query<'w, 's, (Entity, &'static Transform, &'static Wreck)>,
+}
+
+impl WreckTalk<'_, '_> {
+    /// The wrecks worth diving on that are talked of at `port`, nearest
+    /// `at` first.
+    pub fn known_at(&self, port: Entity, at: Vec3) -> Vec<(Entity, Vec3)> {
+        let mut known: Vec<(Entity, Vec3)> = self
+            .ledger
+            .news
+            .iter()
+            .filter(|news| news.known_at.contains(&port))
+            .filter_map(|news| match news.event {
+                Happening::Wrecked {
+                    wreck: Some(wreck), ..
+                } => self.wrecks.get(wreck).ok(),
+                _ => None,
+            })
+            .filter(|(_, _, wreck)| wreck.has_anything())
+            .map(|(wreck, lies, _)| (wreck, lies.translation))
+            .collect();
+        known.sort_by(|a, b| a.1.distance(at).total_cmp(&b.1.distance(at)));
+        known
+    }
 }
 
 /// Whether a wreck at `at` lies shallow enough to dive on.
@@ -218,7 +226,7 @@ impl Plugin for WrecksPlugin {
                 Update,
                 go_down
                     .after(FrameSet::Orders)
-                    .after(crate::word::record_news),
+                    .after(crate::word::record_deeds),
             )
             .add_systems(
                 FixedUpdate,
@@ -230,6 +238,116 @@ impl Plugin for WrecksPlugin {
     }
 }
 
+/// A ship going down, as her wreck and the news will remember her.
+#[derive(QueryData)]
+struct Foundering {
+    name: &'static Name,
+    at: &'static Transform,
+    heading: &'static Heading,
+    hold: &'static Hold,
+    purse: &'static Purse,
+    crew: &'static Crew,
+    flag: Flag,
+    is_player: Has<Player>,
+}
+
+/// Word of a ship lost: the ships in sight who saw it and those in those
+/// waters, the ports her boats make for, the captains who know it, and the
+/// ledger it goes in.
+#[derive(SystemParam)]
+struct WordOfLoss<'w, 's> {
+    at_sea: Query<'w, 's, (Entity, &'static Name, &'static Transform), AtSea>,
+    ports: Query<'w, 's, (Entity, &'static Transform), With<Port>>,
+    captains: Query<'w, 's, (Entity, &'static mut Knowledge)>,
+    ledger: ResMut<'w, Ledger>,
+}
+
+impl WordOfLoss<'_, '_> {
+    /// `ship` has gone down at `now` by `cause`, leaving `wreck` if any: the
+    /// loss is noted, and unless she was a prize burned (news already, as
+    /// a capture), word of it goes about with those who saw it and the
+    /// boats.
+    fn tell(
+        &mut self,
+        now: f64,
+        ship: Entity,
+        lost: &FounderingItem,
+        cause: Cause,
+        wreck: Option<Entity>,
+    ) {
+        let position = lost.at.translation;
+        let saw = witnesses(
+            position,
+            self.at_sea
+                .iter()
+                .map(|(other, _, at)| (other, at.translation)),
+            &[ship],
+        );
+        let nearby = in_those_waters(
+            position,
+            ship,
+            self.at_sea
+                .iter()
+                .map(|(other, name, at)| (other, name, at.translation)),
+        );
+        self.ledger.note_loss(Loss {
+            ship,
+            name: lost.name.to_string(),
+            group: Group::of(lost.flag.colours, lost.flag.serves),
+            fate: cause.fate(),
+            at: now,
+            nearby,
+        });
+        if matches!(cause, Cause::Burned(_)) {
+            return;
+        }
+        let boats = cause
+            .survivors()
+            .then(|| {
+                boat_to(
+                    position,
+                    now,
+                    self.ports.iter().map(|(p, at)| (p, at.translation)),
+                )
+            })
+            .flatten()
+            .into_iter()
+            .collect();
+        let hold = lost.hold;
+        let largest = hold
+            .owned
+            .iter()
+            .chain(hold.consigned.iter())
+            .filter(|&(_, tons)| tons >= 1.0)
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(good, tons)| (good, tons as u32));
+        let event = Happening::Wrecked {
+            ship,
+            name: lost.name.to_string(),
+            nation: lost.flag.colours.map(|colours| colours.0),
+            cargo: largest,
+            wreck,
+        };
+        let place = Place::Sea(position);
+        let id = self
+            .ledger
+            .record(now, place, event.clone(), Vec::new(), saw.clone(), boats);
+        for (_, mut knowledge) in self
+            .captains
+            .iter_mut()
+            .filter(|(captain, _)| saw.contains(captain))
+        {
+            knowledge.0.push(Tale {
+                news: id,
+                at: now,
+                place,
+                event: event.clone(),
+                heard: Heard::Saw,
+            });
+        }
+    }
+}
+
 /// Every ship going down: word of it goes in the ledger, she leaves a
 /// wreck if the water's shallow, and she's gone. A player wrecked on a
 /// reef or the shore takes to the boat with her men.
@@ -237,19 +355,11 @@ fn go_down(
     mut founders: MessageReader<Founder>,
     clock: Res<WorldClock>,
     land: Res<Land>,
-    ships: Query<(
-        (&Name, &Transform, &Heading),
-        (&Hold, &Purse, &Crew),
-        (Option<&Colours>, Option<&Serves>),
-        Has<Player>,
-    )>,
-    at_sea: Query<(Entity, &Name, &Transform), (Without<Docked>, Without<Wreck>)>,
+    ships: Query<Foundering>,
     players: Query<(), With<Player>>,
-    ports: Query<(Entity, &Transform), With<Port>>,
     jobs: Query<(Entity, &Carrier)>,
-    mut witnesses_heard: Query<(Entity, &mut Knowledge)>,
     wreck_names: Query<&Name, With<Wreck>>,
-    mut ledger: ResMut<Ledger>,
+    mut word: WordOfLoss,
     mut captaincy: Captaincy,
     mut alerts: MessageWriter<Alert>,
 ) {
@@ -259,9 +369,7 @@ fn go_down(
         if gone.contains(&ship) {
             continue;
         }
-        let Ok(((name, at, heading), (hold, purse, crew), (colours, serves), is_player)) =
-            ships.get(ship)
-        else {
+        let Ok(lost) = ships.get(ship) else {
             // Nothing to tell of or leave behind, but she's gone all the same.
             if !players.contains(ship) {
                 captaincy.commands.entity(ship).try_despawn();
@@ -269,16 +377,15 @@ fn go_down(
             continue;
         };
         gone.push(ship);
-        let position = at.translation;
-        let nation = colours.map(|colours| colours.0);
-        let mut cargo = hold.owned.clone();
-        for (good, tons) in hold.consigned.iter() {
+        let position = lost.at.translation;
+        let mut cargo = lost.hold.owned.clone();
+        for (good, tons) in lost.hold.consigned.iter() {
             cargo.add(good, tons);
         }
         let wreck = Wreck {
-            nation,
+            nation: lost.flag.colours.map(|colours| colours.0),
             cargo,
-            purse: purse.0,
+            purse: lost.purse.0,
             until: now + WRECK_DAYS * DAY,
             salvors: Vec::new(),
         };
@@ -286,88 +393,26 @@ fn go_down(
             captaincy
                 .commands
                 .spawn((
-                    Name::new(wreck_name(name.as_str(), wreck_names.iter())),
+                    Name::new(wreck_name(lost.name.as_str(), wreck_names.iter())),
                     wreck,
                     Transform::from_translation(position),
                 ))
                 .id()
         });
-        let saw = witnesses(
-            position,
-            at_sea.iter().map(|(other, _, at)| (other, at.translation)),
-            &[ship],
-        );
-        let nearby = in_those_waters(
-            position,
-            ship,
-            at_sea
-                .iter()
-                .map(|(other, name, at)| (other, name, at.translation)),
-        );
-        ledger.note_loss(Loss {
-            ship,
-            name: name.to_string(),
-            group: Group::of(colours, serves),
-            fate: cause.fate(),
-            at: now,
-            nearby,
-        });
-        // A burned prize was news already, as a capture.
-        if !matches!(cause, Cause::Burned(_)) {
-            let boats = cause
-                .survivors()
-                .then(|| {
-                    boat_to(
-                        position,
-                        now,
-                        ports.iter().map(|(p, at)| (p, at.translation)),
-                    )
-                })
-                .flatten()
-                .into_iter()
-                .collect();
-            let largest = hold
-                .owned
-                .iter()
-                .chain(hold.consigned.iter())
-                .filter(|&(_, tons)| tons >= 1.0)
-                .max_by(|a, b| a.1.total_cmp(&b.1))
-                .map(|(good, tons)| (good, tons as u32));
-            let event = Happening::Wrecked {
-                ship,
-                name: name.to_string(),
-                nation,
-                cargo: largest,
-                wreck,
-            };
-            let place = Place::Sea(position);
-            let id = ledger.record(now, place, event.clone(), Vec::new(), saw.clone(), boats);
-            for (_, mut knowledge) in witnesses_heard
-                .iter_mut()
-                .filter(|(captain, _)| saw.contains(captain))
-            {
-                knowledge.0.push(Tale {
-                    news: id,
-                    at: now,
-                    place,
-                    event: event.clone(),
-                    heard: Heard::Saw,
-                });
-            }
-        }
+        word.tell(now, ship, &lost, cause, wreck);
         for (job, carrier) in &jobs {
             if carrier.0 == ship {
                 captaincy.commands.entity(job).despawn();
             }
         }
-        if is_player {
+        if lost.is_player {
             // The player sunk in battle stays where she went down.
             if cause.survivors() {
                 let boat = Boat {
                     at: position,
-                    heading: heading.0,
+                    heading: lost.heading.0,
                     docked: None,
-                    hands: crew.count,
+                    hands: lost.crew.count,
                     purse: 0,
                 };
                 let boat = captaincy.lose(ship, boat, None);
@@ -410,7 +455,7 @@ fn strike_reefs(
     clock: Res<WorldClock>,
     land: Res<Land>,
     mut dice: ResMut<Dice>,
-    at_sea: Query<(Entity, &Transform), (With<Timbers>, Without<Docked>, Without<Wreck>)>,
+    at_sea: Query<(Entity, &Transform), (With<Timbers>, AtSea)>,
     mut ships: Query<&mut Timbers>,
     mut alerts: MessageWriter<Alert>,
     mut founders: MessageWriter<Founder>,
@@ -463,6 +508,26 @@ fn hole(
     }
 }
 
+/// A ship at sea: not in port, and not a wreck.
+type AtSea = (Without<Docked>, Without<Wreck>);
+
+/// A ship lying to at sea: not in battle, and with no course to sail.
+type LyingTo = (AtSea, Without<Engaged>, Without<Route>);
+
+/// A ship diving on a wreck.
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct Salvor {
+    entity: Entity,
+    at: &'static Transform,
+    speed: &'static Speed,
+    hold: &'static mut Hold,
+    purse: &'static mut Purse,
+    crew: &'static Crew,
+    complement: &'static Complement,
+    colours: Option<&'static Colours>,
+}
+
 /// The sea takes its share of every wreck, and breaks her up in time.
 /// Every ship hove to over a wreck brings up what her men can and her hold
 /// has room for. Salvaging another nation's wreck is a deed against its
@@ -472,21 +537,7 @@ fn salvage_wrecks(
     clock: Res<WorldClock>,
     goods: Res<Goods>,
     mut wrecks: Query<(Entity, &Transform, &mut Wreck)>,
-    mut ships: Query<
-        (
-            Entity,
-            &Transform,
-            &Speed,
-            (&mut Hold, &mut Purse, &Crew, &Complement),
-            Option<&Colours>,
-        ),
-        (
-            Without<Docked>,
-            Without<Engaged>,
-            Without<Route>,
-            Without<Wreck>,
-        ),
-    >,
+    mut ships: Query<Salvor, LyingTo>,
     mut deeds: MessageWriter<Deed>,
     mut alerts: MessageWriter<Alert>,
     mut commands: Commands,
@@ -503,8 +554,10 @@ fn salvage_wrecks(
         for (good, tons) in cargo {
             wreck.cargo.remove(good, tons * (1.0 - kept));
         }
-        for (ship, at, speed, (mut hold, mut purse, crew, complement), colours) in &mut ships {
-            if at.translation.distance(lies.translation) > SALVAGE_RANGE || speed.0 > HOVE_TO {
+        for mut salvor in &mut ships {
+            let ship = salvor.entity;
+            let lying_over = salvor.at.translation.distance(lies.translation) <= SALVAGE_RANGE;
+            if !lying_over || salvor.speed.0 > HOVE_TO {
                 continue;
             }
             if !wreck.salvors.contains(&ship) {
@@ -516,7 +569,7 @@ fn salvage_wrecks(
                     },
                 });
                 if let Some(nation) = wreck.nation
-                    && colours.map(|colours| colours.0) != Some(nation)
+                    && salvor.colours.map(|colours| colours.0) != Some(nation)
                 {
                     deeds.write(Deed {
                         doer: ship,
@@ -529,12 +582,13 @@ fn salvage_wrecks(
                     });
                 }
             }
-            let room = hold.room(&goods, Carriage::Hold, crew.count, complement.berths);
-            let tons = TONS_PER_MAN_HOUR * crew.count as f64 * hours;
+            let (men, berths) = (salvor.crew.count, salvor.complement.berths);
+            let room = salvor.hold.room(&goods, Carriage::Hold, men, berths);
+            let tons = TONS_PER_MAN_HOUR * men as f64 * hours;
             let (silver, haul) = salvage(&goods, &mut wreck, tons, room);
-            purse.0 += silver;
+            salvor.purse.0 += silver;
             for (good, tons) in haul.iter() {
-                hold.owned.add(good, tons);
+                salvor.hold.owned.add(good, tons);
             }
         }
         if !wreck.has_anything() {

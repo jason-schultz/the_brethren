@@ -36,6 +36,7 @@ pub mod roster;
 pub mod sailing;
 pub mod save;
 pub mod schedule;
+pub mod seamanship;
 pub mod service;
 pub mod ship_class;
 pub mod shipyard;
@@ -97,6 +98,7 @@ impl Plugin for SimulationPlugin {
                 merchants::MerchantsPlugin,
                 patrols::PatrolsPlugin,
                 raiders::RaidersPlugin,
+                seamanship::SeamanshipPlugin,
                 allegiance::AllegiancePlugin,
                 escorts::EscortsPlugin,
                 word::WordPlugin,
@@ -123,6 +125,7 @@ impl Plugin for GamePlugin {
             save::quicksave::QuicksavePlugin,
             chronicle::ChroniclePlugin {
                 run: chronicle::Run::Play,
+                seed: None,
             },
         ));
     }

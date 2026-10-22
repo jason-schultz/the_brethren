@@ -133,11 +133,18 @@ impl fmt::Display for Stamp {
 }
 
 /// The name of the log of a run begun at `started`: names sort in the
-/// order the runs began.
-pub fn log_name(started: u64, run: Run) -> String {
+/// order the runs began, once their extension is off. Runs begun in the
+/// same second, soaks run side by side, take the `nth` name after the
+/// first, so none writes over another: up to 99 of them.
+pub fn log_name(started: u64, run: Run, nth: u32) -> String {
     let at = Stamp::at(started);
+    let after = if nth == 0 {
+        String::new()
+    } else {
+        format!("-{:02}", nth + 1)
+    };
     format!(
-        "{}-{:02}-{:02}-{:02}{:02}{:02}-{}.jsonl",
+        "{}-{:02}-{:02}-{:02}{:02}{:02}-{}{after}.jsonl",
         at.year,
         at.month,
         at.day,
@@ -150,7 +157,9 @@ pub fn log_name(started: u64, run: Run) -> String {
 
 /// Deletes the oldest runs in `folder` beyond the newest `keep`, and then
 /// more, oldest first, until the rest fit in `max_bytes`. A run is its log
-/// and every file beside it named for it. Returns what was deleted.
+/// and every file beside it named for it. Returns what was deleted. Runs
+/// side by side prune the same folder: a file another has deleted first
+/// is no matter.
 pub fn prune(folder: &Path, keep: usize, max_bytes: u64) -> io::Result<Vec<PathBuf>> {
     let mut runs: BTreeMap<String, (bool, u64, Vec<PathBuf>)> = BTreeMap::new();
     for entry in fs::read_dir(folder)? {
@@ -161,9 +170,14 @@ pub fn prune(folder: &Path, keep: usize, max_bytes: u64) -> io::Result<Vec<PathB
         let Some((stem, extension)) = name.split_once('.') else {
             continue;
         };
+        let size = match fs::metadata(&path) {
+            Ok(metadata) => metadata.len(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
         let run = runs.entry(stem.to_string()).or_default();
         run.0 |= extension == "jsonl";
-        run.1 += fs::metadata(&path)?.len();
+        run.1 += size;
         run.2.push(path);
     }
     runs.retain(|_, (is_run, _, _)| *is_run);
@@ -172,8 +186,11 @@ pub fn prune(folder: &Path, keep: usize, max_bytes: u64) -> io::Result<Vec<PathB
     let mut deleted = Vec::new();
     for (_, _, paths) in runs.into_values().take(doomed) {
         for path in paths {
-            fs::remove_file(&path)?;
-            deleted.push(path);
+            match fs::remove_file(&path) {
+                Ok(()) => deleted.push(path),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
         }
     }
     Ok(deleted)
@@ -214,14 +231,26 @@ mod tests {
     #[test]
     fn log_names_sort_in_the_order_runs_began() {
         assert_eq!(
-            log_name(1_700_000_000, Run::Play),
+            log_name(1_700_000_000, Run::Play, 0),
             "2023-11-14-221320-play.jsonl"
         );
         let mut names = [1_700_000_000, 1_699_999_999, 1_000_000_000]
-            .map(|started| log_name(started, Run::Soak));
+            .map(|started| log_name(started, Run::Soak, 0));
         names.sort();
-        assert_eq!(names[0], log_name(1_000_000_000, Run::Soak));
-        assert_eq!(names[2], log_name(1_700_000_000, Run::Soak));
+        assert_eq!(names[0], log_name(1_000_000_000, Run::Soak, 0));
+        assert_eq!(names[2], log_name(1_700_000_000, Run::Soak, 0));
+    }
+
+    #[test]
+    fn runs_begun_in_the_same_second_take_the_next_name_in_order() {
+        let names = [0, 1, 9].map(|nth| log_name(1_700_000_000, Run::Soak, nth));
+        assert_eq!(names[1], "2023-11-14-221320-soak-02.jsonl");
+        // The logbook and the pruner both sort runs by name, less the
+        // extension.
+        let stems = names.map(|name| name.trim_end_matches(".jsonl").to_string());
+        let mut sorted = stems.clone();
+        sorted.sort();
+        assert_eq!(sorted, stems);
     }
 
     #[test]

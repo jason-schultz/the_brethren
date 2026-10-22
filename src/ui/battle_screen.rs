@@ -1,6 +1,7 @@
 //! The battle screen, for the abstract battle style: when the player is
 //! engaged, the world pauses and the battle is fought by rounds here.
 
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 
@@ -34,16 +35,30 @@ pub(super) fn plugin(app: &mut App) {
         );
 }
 
+/// The player's ship, and whether she's fighting, and by rounds.
+#[derive(QueryData)]
+struct InBattle {
+    entity: Entity,
+    at: &'static Transform,
+    engaged: Option<&'static Engaged>,
+    by_rounds: Has<Rounds>,
+}
+
 /// Starts a battle by rounds when the player is engaged under the abstract
 /// style, and ends it when she isn't. The world waits while it lasts.
 fn fight_by_rounds(
     style: Res<BattleStyle>,
-    player: Single<(Entity, &Transform, Option<&Engaged>, Has<Rounds>), With<Player>>,
+    player: Single<InBattle, With<Player>>,
     ships: Query<&Transform>,
     mut time: ResMut<Time<Virtual>>,
     mut commands: Commands,
 ) {
-    let (ship, at, engaged, by_rounds) = *player;
+    let InBattleItem {
+        entity: ship,
+        at,
+        engaged,
+        by_rounds,
+    } = player.into_inner();
     let abstract_style = *style == BattleStyle::Abstract;
     match (engaged, by_rounds) {
         (Some(engaged), false) if abstract_style => {

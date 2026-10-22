@@ -30,6 +30,18 @@ const STRIKE_RIGGING: f32 = 0.2;
 /// ...or her crew falls below this fraction of the hands she needs.
 const STRIKE_CREW: f32 = 0.5;
 
+/// Whether a ship with `timbers` and `rigging` left is too battered to fight
+/// or run well: no captain goes looking for a fight like this.
+pub fn battered(timbers: f32, rigging: f32) -> bool {
+    timbers < COMPROMISED || rigging < COMPROMISED
+}
+
+/// Whether a ship is in no state to go looking for a fight: battered, or
+/// with fewer than the `min_crew` hands she needs to work her.
+pub fn unfit(timbers: f32, rigging: f32, crew: u32, min_crew: u32) -> bool {
+    battered(timbers, rigging) || crew < min_crew
+}
+
 /// What a ship brings to a fight.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Strength {
@@ -52,7 +64,7 @@ impl Strength {
 
     /// Too battered to fight or run well.
     pub fn compromised(&self) -> bool {
-        self.timbers < COMPROMISED || self.rigging < COMPROMISED
+        battered(self.timbers, self.rigging)
     }
 
     /// Beaten: time to strike her colours.

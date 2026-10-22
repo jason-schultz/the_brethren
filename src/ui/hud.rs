@@ -6,6 +6,7 @@
 
 use std::fmt::Write;
 
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button, observe};
 
@@ -332,8 +333,47 @@ fn show_legend(show: Res<ShowInfluence>, mut legend: Single<&mut Node, With<Lege
     legend.display = if show.0 { Display::Flex } else { Display::None };
 }
 
+/// The player's ship, as the status line tells of her.
+#[derive(QueryData)]
+struct Status {
+    heading: &'static Heading,
+    speed: &'static Speed,
+    purse: &'static Purse,
+    crew: &'static Crew,
+    hold: &'static Hold,
+    standing: &'static Standing,
+}
+
+/// A boxed text node: its text, and the box shown or hidden around it.
+type TextBox = (&'static mut Text, &'static mut Node);
+/// The pinned message's box, and the notices'.
+type PinnedBox = (With<PinnedText>, Without<NoticesText>);
+type NoticesBox = (With<NoticesText>, Without<PinnedText>);
+
+/// The player's ship in a fight, as the battle box tells of her...
+#[derive(QueryData)]
+struct OurSide {
+    at: &'static Transform,
+    battery: &'static Battery,
+    timbers: &'static Timbers,
+    rigging: &'static Rigging,
+    crew: &'static Crew,
+    engaged: Option<&'static Engaged>,
+}
+
+/// ...and her enemy.
+#[derive(QueryData)]
+struct TheirSide {
+    name: &'static Name,
+    at: &'static Transform,
+    timbers: &'static Timbers,
+    rigging: &'static Rigging,
+    crew: &'static Crew,
+    struck: Has<Struck>,
+}
+
 fn update_status(
-    player: Single<(&Heading, &Speed, &Purse, &Crew, &Hold, &Standing), With<Player>>,
+    player: Single<Status, With<Player>>,
     clock: Res<WorldClock>,
     wind: Res<Wind>,
     goods: Res<Goods>,
@@ -341,7 +381,14 @@ fn update_status(
     mut status: Single<&mut Text, (With<StatusText>, Without<WarningText>)>,
     mut warning: Single<&mut Text, (With<WarningText>, Without<StatusText>)>,
 ) {
-    let (heading, speed, purse, crew, hold, standing) = *player;
+    let StatusItem {
+        heading,
+        speed,
+        purse,
+        crew,
+        hold,
+        standing,
+    } = player.into_inner();
     let people = crew.count as f64 + hold.passengers(&goods);
     let days = days_of_provisions(hold.owned.get(goods.provisions), people).min(999.0);
     let text = format!(
@@ -452,8 +499,8 @@ fn update_messages(
     real: Res<Time<Real>>,
     names: Query<&Name>,
     goods: Res<Goods>,
-    mut pinned: Single<(&mut Text, &mut Node), (With<PinnedText>, Without<NoticesText>)>,
-    mut log: Single<(&mut Text, &mut Node), (With<NoticesText>, Without<PinnedText>)>,
+    mut pinned: Single<TextBox, PinnedBox>,
+    mut log: Single<TextBox, NoticesBox>,
 ) {
     let call = latest
         .0
@@ -480,23 +527,31 @@ pub(super) fn show_text((text, node): &mut (Mut<Text>, Mut<Node>), content: Stri
 }
 
 fn update_battle_box(
-    player: Single<
-        (
-            &Transform,
-            &Battery,
-            &Timbers,
-            &Rigging,
-            &Crew,
-            Option<&Engaged>,
-        ),
-        With<Player>,
-    >,
-    enemies: Query<(&Name, &Transform, &Timbers, &Rigging, &Crew, Has<Struck>)>,
+    player: Single<OurSide, With<Player>>,
+    enemies: Query<TheirSide>,
     bindings: Res<Bindings>,
     mut text: Single<(&mut Text, &mut Node), With<BattleBox>>,
 ) {
-    let (at, battery, timbers, rigging, crew, engaged) = *player;
-    let enemy = engaged.and_then(|engaged| enemies.get(engaged.enemy).ok());
+    let OurSideItem {
+        at,
+        battery,
+        timbers,
+        rigging,
+        crew,
+        engaged,
+    } = player.into_inner();
+    let enemy = engaged
+        .and_then(|engaged| enemies.get(engaged.enemy).ok())
+        .map(|them| {
+            (
+                them.name,
+                them.at,
+                them.timbers,
+                them.rigging,
+                them.crew,
+                them.struck,
+            )
+        });
     let line = enemy.map(|enemy| {
         battle_text(
             (at.translation, battery, timbers, rigging, crew),

@@ -12,7 +12,7 @@ use bevy::prelude::*;
 
 use crate::geometry::convex_corners_offset;
 use crate::map::Land;
-use crate::math::from_plane;
+use crate::math::{from_plane, heading_to_direction};
 
 /// Minimum distance (meters) a planned leg keeps from land.
 pub const LAND_CLEARANCE: f32 = 60.0;
@@ -22,6 +22,8 @@ const CORNER_OFFSET: f32 = LAND_CLEARANCE * 2.0;
 /// An endpoint already close to land, such as a ship at a quay, only needs
 /// its legs to stay this fraction of its own distance from land.
 const ENDPOINT_SLACK: f32 = 0.9;
+/// The bearings a ship touching the shore tries for open water.
+const OFFING_BEARINGS: usize = 16;
 
 /// Length in meters of a route starting at `from`.
 pub fn route_length(from: Vec3, route: &[Vec3]) -> f32 {
@@ -80,16 +82,26 @@ impl NavGraph {
 
     /// Waypoints from `from` to `to` that keep clear of land, ending at `to`.
     ///
-    /// If there's no route, which happens when either end is on land or
-    /// enclosed by it, this returns the direct leg and the ship runs aground
-    /// trying.
+    /// A ship touching the shore, as one aground is, has no leg clear of
+    /// it: she first works off into open water, and goes on from there.
+    /// If there's still no route, which happens when either end is on land
+    /// or enclosed by it, this returns the direct leg and the ship runs
+    /// aground trying.
     pub fn plan(&self, land: &Land, from: Vec3, to: Vec3) -> Vec<Vec3> {
         if leg_is_clear(land, from, to) {
-            vec![to]
-        } else {
-            self.shortest_path(land, from, to)
-                .unwrap_or_else(|| vec![to])
+            return vec![to];
         }
+        self.shortest_path(land, from, to)
+            .or_else(|| {
+                let offing = offing(land, from)?;
+                let onward = if leg_is_clear(land, offing, to) {
+                    vec![to]
+                } else {
+                    self.shortest_path(land, offing, to)?
+                };
+                Some([vec![offing], onward].concat())
+            })
+            .unwrap_or_else(|| vec![to])
     }
 
     /// Dijkstra over the graph plus the two endpoints. The graph has only a
@@ -157,6 +169,24 @@ impl NavGraph {
     }
 }
 
+/// Open water just off `from`, for a ship touching the shore there: the
+/// clearest of the points [`CORNER_OFFSET`] away, all round the compass.
+/// `None` if she isn't touching it, or there's none.
+fn offing(land: &Land, from: Vec3) -> Option<Vec3> {
+    if land.clearance(from, from) > 0.0 {
+        return None;
+    }
+    (0..OFFING_BEARINGS)
+        .map(|i| {
+            let bearing = i as f32 * std::f32::consts::TAU / OFFING_BEARINGS as f32;
+            from + heading_to_direction(bearing) * CORNER_OFFSET
+        })
+        .map(|point| (point, land.clearance(point, point)))
+        .filter(|&(_, room)| room >= LAND_CLEARANCE)
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(point, _)| point)
+}
+
 /// Whether a leg between two arbitrary points (a ship, a destination) keeps
 /// clear of land. The required clearance relaxes for endpoints that are
 /// themselves close to land, so a ship near the shore can still sail away.
@@ -203,6 +233,27 @@ mod tests {
             Vec3::new(100.0, 0.0, 50.0)
         );
         assert_eq!(point_along(Vec3::ZERO, &route, 999.0), route[1], "the end");
+    }
+
+    #[test]
+    fn a_ship_on_the_shore_works_off_into_open_water_first() {
+        let land = island();
+        let graph = NavGraph::build(&land);
+        // Hard against the island's east shore, bound round to the west.
+        let aground = Vec3::new(100.0, 0.0, 0.0);
+        assert_eq!(land.clearance(aground, aground), 0.0);
+        let to = Vec3::new(-500.0, 0.0, 0.0);
+        let route = graph.plan(&land, aground, to);
+        assert_eq!(*route.last().unwrap(), to);
+        assert!(route[0].x > 100.0, "off the shore first: {route:?}");
+        let mut at = route[0];
+        for &next in &route[1..] {
+            assert!(
+                land.clearance(at, next) > 0.0,
+                "{at} to {next} runs aground"
+            );
+            at = next;
+        }
     }
 
     #[test]

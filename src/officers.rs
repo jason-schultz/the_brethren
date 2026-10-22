@@ -13,7 +13,7 @@ use crate::alert::{Alert, AlertKind};
 use crate::cargo::Purse;
 use crate::clock::{DAY, WorldClock};
 use crate::combat::rounds::Dice;
-use crate::combat::{Engaged, Timbers};
+use crate::combat::{FreeAtSea, Timbers};
 use crate::economy::Refusal;
 use crate::factions::Nation;
 use crate::port::{Docked, Location, Port};
@@ -387,10 +387,7 @@ fn muster(mut ships: Query<(Entity, &mut Afterguard)>, officers: Query<(&Officer
 
 fn bosun_repairs(
     time: Res<Time>,
-    mut ships: Query<
-        (&Afterguard, &mut Timbers, &mut Rigging),
-        (Without<Docked>, Without<Engaged>),
-    >,
+    mut ships: Query<(&Afterguard, &mut Timbers, &mut Rigging), FreeAtSea>,
 ) {
     let days = (time.delta_secs_f64() / DAY) as f32;
     for (afterguard, mut timbers, mut rigging) in &mut ships {
@@ -469,10 +466,13 @@ fn take_prisoners(
     }
 }
 
+/// Where officers are berthed: ships with an afterguard, and ports.
+type Berths = Or<(With<Afterguard>, With<Port>)>;
+
 /// Officers of a ship that's gone, or a port that's gone, go with her.
 fn discharge_strays(
     officers: Query<(Entity, &Berth), With<Officer>>,
-    places: Query<(), Or<(With<Afterguard>, With<Port>)>>,
+    places: Query<(), Berths>,
     mut commands: Commands,
 ) {
     for (officer, berth) in &officers {

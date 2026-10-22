@@ -9,14 +9,16 @@
 //! With the player in port and raiders about, she asks for an [`Escort`]
 //! before she sails, and word of where she's bound gets about ([`Sailed`]).
 //! With no work, a wreck talked of in port sends her out diving; she
-//! sells what she brings up at the next port she makes.
+//! sells what she brings up at the next port she makes. Her
+//! [`crate::seamanship`] keeps her fit and out of the way of warships.
 
+use bevy::ecs::query::QueryData;
+use bevy::ecs::system::SystemParam;
 use bevy::math::FloatOrd;
 use bevy::prelude::*;
 
 use crate::cargo::{Hold, Purse};
 use crate::clock::{DAY, HOUR, WorldClock};
-use crate::combat::{Engaged, Struck};
 use crate::crew::{Complement, Crew, RATION_TONS};
 use crate::economy::jobs::{AcceptJob, Carrier, Job, check_acceptance};
 use crate::economy::market::{Market, Side, Trade, sell_cargo};
@@ -26,12 +28,13 @@ use crate::goods::Carriage;
 use crate::goods::Goods;
 use crate::navigation::{Arrival, Route, SailOrder};
 use crate::player::Player;
-use crate::port::{CastOff, Docked, Port};
+use crate::port::{Docked, Port, PutToSea};
 use crate::roster::{Listed, Roster};
 use crate::schedule::SimSet;
+use crate::seamanship::{AtHerBusiness, Running, Upkeep};
 use crate::ship_class::ShipClass;
-use crate::word::{Ledger, Purpose, Sailed};
-use crate::wrecks::{SALVAGE_RANGE, Wreck, wrecks_known_at};
+use crate::word::Purpose;
+use crate::wrecks::{SALVAGE_RANGE, WreckTalk};
 
 /// How long a merchant lies in port before looking for work.
 pub const IN_PORT: f64 = 6.0 * HOUR;
@@ -56,6 +59,7 @@ const BERTH_SPACING: f32 = 30.0;
 
 /// An NPC merchant captain, and what she means to do next.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
+#[require(Upkeep = Upkeep::Purse)]
 pub struct Merchant {
     pub plan: Plan,
 }
@@ -93,7 +97,7 @@ impl Plugin for MerchantsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Shipwrights>().add_systems(
             FixedUpdate,
-            (captain_merchants, replace_lost_merchants).in_set(SimSet::Economy),
+            (merchant_at_sea, merchant_in_port, replace_lost_merchants).in_set(SimSet::Economy),
         );
     }
 }
@@ -238,172 +242,230 @@ fn busiest_port<'a>(here: Entity, jobs: impl Iterator<Item = &'a Job>) -> Option
         .map(|(port, _)| port)
 }
 
-fn captain_merchants(
+/// A merchant, as her captain sees her.
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct MerchantShip {
+    entity: Entity,
+    merchant: &'static mut Merchant,
+    at: &'static Transform,
+    hold: &'static Hold,
+    crew: &'static Crew,
+    complement: &'static Complement,
+    colours: Option<&'static Colours>,
+    under_way: Has<Route>,
+}
+
+/// The exchange, as a merchant captain deals with it: the open contracts,
+/// who carries which, and taking one on.
+#[derive(SystemParam)]
+struct Exchange<'w, 's> {
+    open: Query<'w, 's, (Entity, &'static Job), Without<Carrier>>,
+    carried: Query<'w, 's, (&'static Job, &'static Carrier)>,
+    accepts: MessageWriter<'w, AcceptJob>,
+}
+
+impl Exchange<'_, '_> {
+    /// The contracts `ship` carries.
+    fn carried_by(&self, ship: Entity) -> impl Iterator<Item = &Job> {
+        self.carried
+            .iter()
+            .filter(move |(_, carrier)| carrier.0 == ship)
+            .map(|(job, _)| job)
+    }
+
+    /// The open contracts anyone may take.
+    fn for_anyone(&self) -> impl Iterator<Item = (Entity, &Job)> {
+        self.open.iter().filter(|(_, job)| job.for_anyone())
+    }
+}
+
+/// Escorts asked for, and the captains in port who might take them on.
+#[derive(SystemParam)]
+struct EscortDesk<'w, 's> {
+    escorts: Query<'w, 's, &'static Escort>,
+    players: Query<'w, 's, &'static Docked, With<Player>>,
+    relations: Res<'w, Relations>,
+    commands: Commands<'w, 's>,
+}
+
+impl EscortDesk<'_, '_> {
+    /// With a captain in port at `here` and raiders about, a merchant
+    /// sailing for `bound_for` with `job` asks for an escort. Whether she
+    /// has.
+    fn ask(
+        &mut self,
+        ship: Entity,
+        colours: Option<&Colours>,
+        job: Option<&Job>,
+        here: Entity,
+        bound_for: Entity,
+    ) -> bool {
+        let wants = colours.zip(job).filter(|(colours, _)| {
+            wants_escort(colours.0, &self.relations)
+                && self.players.iter().any(|docked| docked.port == here)
+                && !self.escorts.iter().any(|escort| escort.ward == ship)
+        });
+        let Some((colours, job)) = wants else {
+            return false;
+        };
+        self.commands.spawn(Escort {
+            ward: ship,
+            nation: colours.0,
+            origin: here,
+            destination: bound_for,
+            fee: escort_fee(job.payment),
+            escort: None,
+            lost_at: None,
+        });
+        true
+    }
+
+    /// Where the captain escorting `ship` lies, if she has one in port.
+    fn escort_lies(&self, ship: Entity) -> Option<Entity> {
+        self.escorts
+            .iter()
+            .find(|escort| escort.ward == ship)
+            .and_then(|escort| self.players.get(escort.escort?).ok())
+            .map(|docked| docked.port)
+    }
+}
+
+/// A merchant at sea dives on her wreck while there's room and something
+/// to bring up; otherwise, with no voyage, as after a fight, she makes for
+/// the nearest port.
+fn merchant_at_sea(
+    goods: Res<Goods>,
+    talk: WreckTalk,
+    ports: Query<(Entity, &Transform), With<Port>>,
+    mut merchants: Query<MerchantShip, (AtHerBusiness, Without<Running>, Without<Docked>)>,
+    mut orders: MessageWriter<SailOrder>,
+) {
+    for mut ship in &mut merchants {
+        let at = ship.at.translation;
+        if let Plan::Salvaging { wreck } = ship.merchant.plan {
+            let room = ship.hold.room(
+                &goods,
+                Carriage::Hold,
+                ship.crew.count,
+                ship.complement.berths,
+            );
+            if let Ok((_, lies, remains)) = talk.wrecks.get(wreck)
+                && remains.has_anything()
+                && room >= 1.0
+            {
+                if !ship.under_way && at.distance(lies.translation) > SALVAGE_RANGE {
+                    orders.write(SailOrder {
+                        ship: ship.entity,
+                        destination: lies.translation,
+                        on_arrival: Arrival::HeaveTo,
+                    });
+                }
+                continue;
+            }
+        }
+        ship.merchant.plan = Plan::AtSea;
+        if !ship.under_way
+            && let Some((port, anchorage)) = ports
+                .iter()
+                .min_by_key(|(_, anchorage)| FloatOrd(anchorage.translation.distance(at)))
+        {
+            orders.write(SailOrder {
+                ship: ship.entity,
+                destination: anchorage.translation,
+                on_arrival: Arrival::Dock(port),
+            });
+        }
+    }
+}
+
+/// A merchant in port settles in, sells what she salvaged, and looks for
+/// work: a contract here, a wreck talked of, or the port with the most work
+/// waiting. She victuals, asks for an escort if she'd want one, loads, and
+/// sails.
+fn merchant_in_port(
     clock: Res<WorldClock>,
     goods: Res<Goods>,
-    relations: Res<Relations>,
-    mut merchants: Query<
-        (
-            Entity,
-            &mut Merchant,
-            Option<&Docked>,
-            Has<Route>,
-            &Transform,
-            (&Hold, &Crew, &Complement),
-            Option<&Colours>,
-        ),
-        // In battle, her tactics have the helm.
-        (Without<Engaged>, Without<Struck>),
-    >,
-    open_jobs: Query<(Entity, &Job), Without<Carrier>>,
-    carried_jobs: Query<(&Job, &Carrier)>,
+    mut merchants: Query<(MerchantShip, &Docked), (AtHerBusiness, Without<Running>)>,
+    mut exchange: Exchange,
+    mut desk: EscortDesk,
     markets: Query<&Market>,
     ports: Query<(Entity, &Transform), With<Port>>,
-    escorts: Query<&Escort>,
-    players: Query<&Docked, With<Player>>,
-    (ledger, wrecks): (Res<Ledger>, Query<(Entity, &Transform, &Wreck)>),
-    (mut accepts, mut trades): (MessageWriter<AcceptJob>, MessageWriter<Trade>),
-    (mut cast_offs, mut orders, mut sailings): (
-        MessageWriter<CastOff>,
-        MessageWriter<SailOrder>,
-        MessageWriter<Sailed>,
-    ),
-    mut commands: Commands,
+    talk: WreckTalk,
+    mut trades: MessageWriter<Trade>,
+    mut put_to_sea: PutToSea,
 ) {
     let now = clock.elapsed;
-    for (ship, mut merchant, docked, under_way, transform, (hold, crew, complement), colours) in
-        &mut merchants
-    {
-        let Some(&Docked { port: here }) = docked else {
-            if let Plan::Salvaging { wreck } = merchant.plan {
-                let room = hold.room(&goods, Carriage::Hold, crew.count, complement.berths);
-                if let Ok((_, lies, remains)) = wrecks.get(wreck)
-                    && remains.has_anything()
-                    && room >= 1.0
-                {
-                    if !under_way
-                        && transform.translation.distance(lies.translation) > SALVAGE_RANGE
-                    {
-                        orders.write(SailOrder {
-                            ship,
-                            destination: lies.translation,
-                            on_arrival: Arrival::HeaveTo,
-                        });
-                    }
-                    continue;
-                }
-            }
-            merchant.plan = Plan::AtSea;
-            // Adrift with no voyage, as after a fight: make for the nearest port.
-            if !under_way
-                && let Some((port, anchorage)) = ports.iter().min_by_key(|(_, anchorage)| {
-                    FloatOrd(anchorage.translation.distance(transform.translation))
-                })
-            {
-                orders.write(SailOrder {
-                    ship,
-                    destination: anchorage.translation,
-                    on_arrival: Arrival::Dock(port),
-                });
-            }
-            continue;
-        };
-        merchant.plan = match merchant.plan {
+    for (mut ship, &Docked { port: here }) in &mut merchants {
+        let entity = ship.entity;
+        ship.merchant.plan = match ship.merchant.plan {
             Plan::AtSea | Plan::Salvaging { .. } => {
                 // Sell what she salvaged.
                 if let Ok(market) = markets.get(here) {
-                    trades.write_batch(sell_cargo(&goods, ship, hold, market));
+                    trades.write_batch(sell_cargo(&goods, entity, ship.hold, market));
                 }
                 Plan::InPort {
                     until: now + IN_PORT,
                 }
             }
             Plan::InPort { until } if now >= until => {
-                let carrying = carried_jobs
-                    .iter()
-                    .find(|(job, carrier)| carrier.0 == ship && job.destination != here)
-                    .map(|(job, _)| job);
+                let carrying = exchange
+                    .carried_by(entity)
+                    .find(|job| job.destination != here)
+                    .cloned();
                 // One contract at a time: take on work only with none aboard.
-                let job = if carrying.is_none() {
-                    best_job(
-                        &goods,
-                        here,
-                        open_jobs
-                            .iter()
-                            .filter(|(_, job)| job.for_anyone() && job.origin == here),
-                        &markets,
-                        hold,
-                        crew,
-                        complement,
-                    )
-                } else {
-                    None
-                };
+                let job = carrying
+                    .is_none()
+                    .then(|| {
+                        best_job(
+                            &goods,
+                            here,
+                            exchange.for_anyone().filter(|(_, job)| job.origin == here),
+                            &markets,
+                            ship.hold,
+                            ship.crew,
+                            ship.complement,
+                        )
+                    })
+                    .flatten();
                 let contract = carrying.or_else(|| {
                     let (entity, _) = job?;
-                    open_jobs.get(entity).ok().map(|(_, job)| job)
+                    exchange.open.get(entity).ok().map(|(_, job)| job.clone())
                 });
                 // With no contract, a wreck talked of here beats looking
                 // for work elsewhere.
                 let wreck = contract
                     .is_none()
-                    .then(|| wrecks_known_at(&ledger, here, transform.translation, &wrecks))
+                    .then(|| talk.known_at(here, ship.at.translation))
                     .and_then(|known| known.first().copied());
                 if let Some((wreck, lies)) = wreck {
-                    cast_offs.write(CastOff { ship });
-                    orders.write(SailOrder {
-                        ship,
-                        destination: lies,
-                        on_arrival: Arrival::HeaveTo,
-                    });
-                    merchant.plan = Plan::Salvaging { wreck };
+                    put_to_sea.sail(entity, lies, Arrival::HeaveTo, None);
+                    ship.merchant.plan = Plan::Salvaging { wreck };
                     continue;
                 }
-                let bound_for = contract.map(|job| job.destination).or_else(|| {
-                    let open = open_jobs.iter().map(|(_, job)| job);
-                    busiest_port(here, open.filter(|job| job.for_anyone()))
-                });
+                let bound_for = contract
+                    .as_ref()
+                    .map(|job| job.destination)
+                    .or_else(|| busiest_port(here, exchange.for_anyone().map(|(_, job)| job)));
                 match bound_for {
                     Some(bound_for) => {
                         if let Some((job, _)) = job {
-                            accepts.write(AcceptJob { ship, job });
+                            exchange.accepts.write(AcceptJob { ship: entity, job });
                         }
-                        let people = crew.count as f64 + hold.passengers(&goods);
-                        let tons = provisions_needed(people, hold.owned.get(goods.provisions));
+                        let people = ship.crew.count as f64 + ship.hold.passengers(&goods);
+                        let tons = provisions_needed(people, ship.hold.owned.get(goods.provisions));
                         if tons > 0.0 {
                             trades.write(Trade {
-                                ship,
+                                ship: entity,
                                 good: goods.provisions,
                                 quantity: tons as u32,
                                 side: Side::Buy,
                             });
                         }
-                        // With a captain in port and raiders about, she
-                        // asks for an escort, and gives her time to answer.
-                        let escort = contract
-                            .zip(colours)
-                            .filter(|(_, colours)| {
-                                wants_escort(colours.0, &relations)
-                                    && players.iter().any(|docked| docked.port == here)
-                                    && !escorts.iter().any(|escort| escort.ward == ship)
-                            })
-                            .map(|(job, colours)| Escort {
-                                ward: ship,
-                                nation: colours.0,
-                                origin: here,
-                                destination: bound_for,
-                                fee: escort_fee(job.payment),
-                                escort: None,
-                                lost_at: None,
-                            });
-                        let loading = if escort.is_some() {
-                            ESCORT_WAIT
-                        } else {
-                            LOADING
-                        };
-                        if let Some(escort) = escort {
-                            commands.spawn(escort);
-                        }
+                        // Asking for an escort, she gives her time to answer.
+                        let asked =
+                            desk.ask(entity, ship.colours, contract.as_ref(), here, bound_for);
+                        let loading = if asked { ESCORT_WAIT } else { LOADING };
                         Plan::Loading {
                             bound_for,
                             sails_at: now + loading,
@@ -418,34 +480,27 @@ fn captain_merchants(
                 bound_for,
                 sails_at,
             } if now >= sails_at => {
-                let escort_lies = escorts
-                    .iter()
-                    .find(|escort| escort.ward == ship)
-                    .and_then(|escort| players.get(escort.escort?).ok())
-                    .map(|docked| docked.port);
-                if waits_for_escort(escort_lies, here, now, sails_at) {
-                    merchant.plan
+                if waits_for_escort(desk.escort_lies(entity), here, now, sails_at) {
+                    ship.merchant.plan
                 } else {
                     if let Ok((_, anchorage)) = ports.get(bound_for) {
-                        cast_offs.write(CastOff { ship });
-                        orders.write(SailOrder {
-                            ship,
-                            destination: anchorage.translation,
-                            on_arrival: Arrival::Dock(bound_for),
-                        });
-                        if let Some((job, _)) = carried_jobs.iter().find(|(job, carrier)| {
-                            carrier.0 == ship && job.destination == bound_for
-                        }) {
-                            sailings.write(Sailed {
-                                ship,
-                                from: here,
-                                purpose: Purpose::Carrying {
+                        let told = exchange
+                            .carried_by(entity)
+                            .find(|job| job.destination == bound_for)
+                            .map(|job| {
+                                let purpose = Purpose::Carrying {
                                     good: job.good,
                                     quantity: job.quantity,
                                     bound_for,
-                                },
+                                };
+                                (here, purpose)
                             });
-                        }
+                        put_to_sea.sail(
+                            entity,
+                            anchorage.translation,
+                            Arrival::Dock(bound_for),
+                            told,
+                        );
                     }
                     // Still docked until the cast-off order is carried out;
                     // `AtSea` waits that out.
@@ -490,12 +545,14 @@ mod tests {
                                 stock,
                                 target: 50.0,
                                 per_day,
+                                short_for: 0.0,
                             },
                             MarketEntry {
                                 good: provisions,
                                 stock: 100.0,
                                 target: 100.0,
                                 per_day: 1.0,
+                                short_for: 0.0,
                             },
                         ],
                     },

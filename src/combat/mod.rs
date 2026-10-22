@@ -13,11 +13,12 @@ pub mod tactics;
 
 use std::f32::consts::FRAC_PI_2;
 
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 
 use crate::alert::{Alert, AlertKind};
 use crate::crew::Crew;
-use crate::factions::{Colours, Deed, DeedKind, Serves};
+use crate::factions::{Deed, DeedKind, Flag};
 use crate::map::Land;
 use crate::math::{heading_to_direction, normalize_heading};
 use crate::navigation::Route;
@@ -220,20 +221,12 @@ impl Plugin for CombatPlugin {
 
 fn engage(
     mut orders: MessageReader<EngageOrder>,
-    targets: Query<
-        (Option<&Colours>, Option<&Serves>),
-        (
-            With<Battery>,
-            Without<Docked>,
-            Without<Struck>,
-            Without<Sunk>,
-        ),
-    >,
+    targets: Query<Flag, Attackable>,
     mut deeds: MessageWriter<Deed>,
     mut commands: Commands,
 ) {
     for order in orders.read() {
-        let Ok((colours, serves)) = targets.get(order.target) else {
+        let Ok(flag) = targets.get(order.target) else {
             continue;
         };
         if order.ship == order.target {
@@ -243,8 +236,8 @@ fn engage(
             order.ship,
             DeedKind::Attacked,
             order.target,
-            colours,
-            serves,
+            flag.colours,
+            flag.serves,
         ) {
             deeds.write(deed);
         }
@@ -273,7 +266,7 @@ fn queue_fire_orders(mut orders: MessageReader<FireOrder>, mut ships: Query<&mut
 /// were on; the player keeps hers until she chooses otherwise.
 fn join_battle(
     attackers: Query<(Entity, &Engaged)>,
-    defenders: Query<Has<Player>, (With<Battery>, Without<Engaged>, Without<Struck>)>,
+    defenders: Query<Has<Player>, FreeToFight>,
     mut alerts: MessageWriter<Alert>,
     mut commands: Commands,
 ) {
@@ -344,49 +337,79 @@ fn strength(
     }
 }
 
+/// A ship as a fight sees her: her guns, her hull and rig, and her crew.
+#[derive(QueryData)]
+struct Fighting {
+    class: &'static ShipClass,
+    battery: &'static Battery,
+    crew: &'static Crew,
+    timbers: &'static Timbers,
+    rigging: &'static Rigging,
+}
+
+impl FightingItem<'_, '_> {
+    fn strength(&self) -> Strength {
+        strength(
+            self.class,
+            self.battery,
+            self.crew,
+            self.timbers.0,
+            self.rigging.0,
+        )
+    }
+}
+
+/// What shot strikes: her hull, her rig, and her crew, and the officers
+/// who keep her losses down.
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct Target {
+    class: &'static ShipClass,
+    timbers: &'static mut Timbers,
+    rigging: &'static mut Rigging,
+    crew: &'static mut Crew,
+    afterguard: Option<&'static Afterguard>,
+}
+
+impl TargetItem<'_, '_> {
+    /// She takes `damage`, as stoutly as she's built. A surgeon aboard
+    /// saves some of the wounded.
+    fn take(&mut self, damage: Damage) {
+        let hit = damage.against(self.class.stoutness);
+        self.timbers.0 = (self.timbers.0 - hit.timbers).max(0.0);
+        self.rigging.0 = (self.rigging.0 - hit.rigging).max(0.0);
+        let losses = self.afterguard.map_or(1.0, Afterguard::losses);
+        self.crew.take_casualties(hit.men * losses);
+    }
+}
+
+/// A ship at sea and free of any fight: not in port, and not engaged.
+pub type FreeAtSea = (Without<Docked>, Without<Engaged>);
+
+/// A ship that can be engaged: armed, at sea, and neither struck nor sunk.
+type Attackable = (
+    With<Battery>,
+    Without<Docked>,
+    Without<Struck>,
+    Without<Sunk>,
+);
+
+/// An engaged ship her tactic steers: one with no route of her own, and
+/// not struck.
+type SteeredByTactic = (Without<Route>, Without<Struck>);
+
+/// An armed ship free to join a fight: not in one, and not struck.
+type FreeToFight = (With<Battery>, Without<Engaged>, Without<Struck>);
+
 /// Steers every engaged ship that has no route of her own by her tactic.
 fn steer(
-    mut ships: Query<
-        (
-            &Engaged,
-            &Transform,
-            &Heading,
-            &ShipClass,
-            &Battery,
-            &Crew,
-            &Timbers,
-            &Rigging,
-            &mut Helm,
-        ),
-        (Without<Route>, Without<Struck>),
-    >,
-    enemies: Query<(
-        &Transform,
-        &Heading,
-        &ShipClass,
-        &Battery,
-        &Crew,
-        &Timbers,
-        &Rigging,
-        Has<Struck>,
-    )>,
+    mut ships: Query<(&Engaged, &Transform, &Heading, Fighting, &mut Helm), SteeredByTactic>,
+    enemies: Query<(&Transform, &Heading, Fighting, Has<Struck>)>,
     wind: Res<Wind>,
     land: Res<Land>,
 ) {
-    for (engaged, transform, heading, class, battery, crew, timbers, rigging, mut helm) in
-        &mut ships
-    {
-        let Ok((
-            enemy_at,
-            enemy_heading,
-            enemy_class,
-            enemy_battery,
-            enemy_crew,
-            enemy_timbers,
-            enemy_rigging,
-            enemy_struck,
-        )) = enemies.get(engaged.enemy)
-        else {
+    for (engaged, transform, heading, fighting, mut helm) in &mut ships {
+        let Ok((enemy_at, enemy_heading, enemy, enemy_struck)) = enemies.get(engaged.enemy) else {
             continue;
         };
         let tactic = if enemy_struck {
@@ -394,16 +417,7 @@ fn steer(
         } else if engaged.aggressor {
             Tactic::Pursue
         } else {
-            defend(
-                &strength(class, battery, crew, timbers.0, rigging.0),
-                &strength(
-                    enemy_class,
-                    enemy_battery,
-                    enemy_crew,
-                    enemy_timbers.0,
-                    enemy_rigging.0,
-                ),
-            )
+            defend(&fighting.strength(), &enemy.strength())
         };
         let wanted = course(
             tactic,
@@ -430,41 +444,40 @@ fn steer(
     }
 }
 
+/// A ship at her guns.
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct Gunnery {
+    entity: Entity,
+    engaged: &'static Engaged,
+    at: &'static Transform,
+    heading: &'static Heading,
+    battery: &'static mut Battery,
+    control: &'static mut FireControl,
+}
+
 /// Reloads every battery, and fires each loaded broadside that bears. Keen
 /// crews and a gunner reload faster.
 fn fire(
     time: Res<Time>,
-    mut ships: Query<
-        (
-            Entity,
-            &Engaged,
-            &Transform,
-            &Heading,
-            &mut Battery,
-            &mut FireControl,
-        ),
-        Without<Struck>,
-    >,
+    mut ships: Query<Gunnery, Without<Struck>>,
     targets: Query<&Transform, Without<Struck>>,
-    mut hulls: Query<(
-        &ShipClass,
-        &mut Timbers,
-        &mut Rigging,
-        &mut Crew,
-        Option<&Afterguard>,
-    )>,
+    mut hulls: Query<Target>,
     mut volleys: MessageWriter<Volley>,
 ) {
     let dt = time.delta_secs();
     let mut shots: Vec<(Entity, Damage)> = Vec::new();
-    for (ship, engaged, transform, heading, mut battery, mut control) in &mut ships {
+    for mut gunnery in &mut ships {
+        let (ship, engaged, transform, heading) =
+            (gunnery.entity, gunnery.engaged, gunnery.at, gunnery.heading);
+        let battery = &mut gunnery.battery;
         for side in [Broadside::Port, Broadside::Starboard] {
             let reload = battery.reload_mut(side);
             *reload = (*reload - dt).max(0.0);
         }
         // A manual order is for this moment only: guns that don't bear
         // or aren't loaded don't fire, and the order lapses.
-        let order = match control.as_mut() {
+        let order = match gunnery.control.as_mut() {
             FireControl::Auto => None,
             FireControl::Manual { order } => Some(order.take()),
         };
@@ -480,11 +493,10 @@ fn fire(
         if !ordered || distance > GUN_RANGE || battery.reload(side) > 0.0 || battery.guns == 0 {
             continue;
         }
-        let reload = hulls
-            .get(ship)
-            .map_or(RELOAD, |(_, _, _, crew, afterguard)| {
-                RELOAD * afterguard.map_or(1.0, Afterguard::reload) / crew.spirits().work_rate()
-            });
+        let reload = hulls.get(ship).map_or(RELOAD, |hull| {
+            RELOAD * hull.afterguard.map_or(1.0, Afterguard::reload)
+                / hull.crew.spirits().work_rate()
+        });
         *battery.reload_mut(side) = reload;
         volleys.write(Volley {
             from: transform.translation,
@@ -493,35 +505,44 @@ fn fire(
         shots.push((engaged.enemy, damage(hits(battery.per_side(), distance))));
     }
     for (target, hit) in shots {
-        if let Ok((class, mut timbers, mut rigging, mut crew, afterguard)) = hulls.get_mut(target) {
-            let hit = hit.against(class.stoutness);
-            suffer(hit, afterguard, &mut timbers, &mut rigging, &mut crew);
+        if let Ok(mut hull) = hulls.get_mut(target) {
+            hull.take(hit);
         }
     }
 }
 
-/// A ship takes `hit`. A surgeon aboard saves some of the wounded.
-fn suffer(
-    hit: Damage,
-    afterguard: Option<&Afterguard>,
-    timbers: &mut Timbers,
-    rigging: &mut Rigging,
-    crew: &mut Crew,
-) {
-    timbers.0 = (timbers.0 - hit.timbers).max(0.0);
-    rigging.0 = (rigging.0 - hit.rigging).max(0.0);
-    crew.take_casualties(hit.men * afterguard.map_or(1.0, Afterguard::losses));
+/// A ship as a round sees her.
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct RoundShip {
+    at: &'static mut Transform,
+    heading: &'static mut Heading,
+    hull: &'static Hull,
+    handling: &'static SailHandling,
+    laden: &'static Laden,
+    battery: &'static Battery,
+    target: Target,
 }
 
-/// A ship as a round sees her: her strength, and her best speed as she is.
-fn fighter(
-    (hull, handling, laden): (&Hull, &SailHandling, &Laden),
-    (battery, class): (&Battery, &ShipClass),
-    (timbers, rigging, crew): (&Timbers, &Rigging, &Crew),
-) -> Fighter {
-    Fighter {
-        strength: strength(class, battery, crew, timbers.0, rigging.0),
-        speed: sail_speed(hull.speed_mps, handling.0, rigging.0, laden.0),
+impl RoundShipItem<'_, '_> {
+    /// Her strength, and her best speed as she is.
+    fn fighter(&self) -> Fighter {
+        let target = &self.target;
+        Fighter {
+            strength: strength(
+                target.class,
+                self.battery,
+                &target.crew,
+                target.timbers.0,
+                target.rigging.0,
+            ),
+            speed: sail_speed(
+                self.hull.speed_mps,
+                self.handling.0,
+                target.rigging.0,
+                self.laden.0,
+            ),
+        }
     }
 }
 
@@ -535,14 +556,7 @@ fn play_rounds(
     engaged: Query<&Engaged>,
     struck: Query<(), With<Struck>>,
     mut rounds: Query<&mut Rounds>,
-    mut ships: Query<(
-        &mut Transform,
-        &mut Heading,
-        (&Hull, &SailHandling, &Laden),
-        (&Battery, &ShipClass),
-        (&mut Timbers, &mut Rigging, &mut Crew),
-        Option<&Afterguard>,
-    )>,
+    mut ships: Query<RoundShip>,
     mut commands: Commands,
 ) {
     for order in orders.read() {
@@ -552,12 +566,9 @@ fn play_rounds(
         let Ok(mut state) = rounds.get_mut(order.ship) else {
             continue;
         };
-        let Ok([us, them]) = ships.get_many_mut([order.ship, enemy]) else {
+        let Ok([mut us, mut them]) = ships.get_many_mut([order.ship, enemy]) else {
             continue;
         };
-        let (mut our_at, mut our_heading, our_sailing, our_guns, mut our_hull, our_officers) = us;
-        let (their_at, their_heading, their_sailing, their_guns, mut their_hull, their_officers) =
-            them;
         let round = if struck.contains(enemy) {
             // She's given up: closing lays us alongside, and no one fires.
             Round {
@@ -570,16 +581,7 @@ fn play_rounds(
                 dealt: Damage::default(),
             }
         } else {
-            let ours = fighter(
-                our_sailing,
-                our_guns,
-                (&our_hull.0, &our_hull.1, &our_hull.2),
-            );
-            let theirs = fighter(
-                their_sailing,
-                their_guns,
-                (&their_hull.0, &their_hull.1, &their_hull.2),
-            );
+            let (ours, theirs) = (us.fighter(), them.fighter());
             let their_tactic = if engaged.get(enemy).is_ok_and(|e| e.aggressor) {
                 Tactic::Pursue
             } else {
@@ -594,12 +596,8 @@ fn play_rounds(
                 &mut dice,
             )
         };
-        let (timbers, rigging, crew) = &mut our_hull;
-        let taken = round.taken.against(our_guns.1.stoutness);
-        suffer(taken, our_officers, timbers, rigging, crew);
-        let (timbers, rigging, crew) = &mut their_hull;
-        let dealt = round.dealt.against(their_guns.1.stoutness);
-        suffer(dealt, their_officers, timbers, rigging, crew);
+        us.target.take(round.taken);
+        them.target.take(round.dealt);
         state.last = Some((order.play, round));
         match round.range {
             None => {
@@ -610,9 +608,9 @@ fn play_rounds(
                 state.range = range;
                 if range == Range::Alongside {
                     // Lie alongside her, on her beam, on the same heading.
-                    let beam = heading_to_direction(their_heading.0 + FRAC_PI_2);
-                    our_at.translation = their_at.translation + beam * BOARDING_RANGE / 2.0;
-                    our_heading.0 = their_heading.0;
+                    let beam = heading_to_direction(them.heading.0 + FRAC_PI_2);
+                    us.at.translation = them.at.translation + beam * BOARDING_RANGE / 2.0;
+                    us.heading.0 = them.heading.0;
                 }
             }
         }
@@ -622,28 +620,18 @@ fn play_rounds(
 /// Holed ships sink and beaten AI captains strike. The player never
 /// strikes on her own; she fights until she sinks or breaks off.
 fn strike_or_sink(
-    ships: Query<(
-        Entity,
-        &Engaged,
-        &ShipClass,
-        &Battery,
-        &Crew,
-        &Timbers,
-        &Rigging,
-        Has<Player>,
-        (Option<&Colours>, Option<&Serves>),
-    )>,
+    ships: Query<(Entity, &Engaged, Fighting, Has<Player>, Flag)>,
     mut helms: Query<&mut Helm>,
     mut alerts: MessageWriter<Alert>,
     mut deeds: MessageWriter<Deed>,
     mut founders: MessageWriter<Founder>,
     mut commands: Commands,
 ) {
-    for (ship, engaged, class, battery, crew, timbers, rigging, is_player, flag) in &ships {
+    for (ship, engaged, fighting, is_player, flag) in &ships {
         let foe = engaged.enemy;
-        if timbers.0 <= 0.0 {
-            let (colours, serves) = flag;
-            if let Some(deed) = Deed::to_ship(foe, DeedKind::Sank, ship, colours, serves) {
+        if fighting.timbers.0 <= 0.0 {
+            if let Some(deed) = Deed::to_ship(foe, DeedKind::Sank, ship, flag.colours, flag.serves)
+            {
                 deeds.write(deed);
             }
             alerts.write(Alert {
@@ -672,7 +660,7 @@ fn strike_or_sink(
                     cause: Cause::Battle(foe),
                 });
             }
-        } else if !is_player && strength(class, battery, crew, timbers.0, rigging.0).beaten() {
+        } else if !is_player && fighting.strength().beaten() {
             alerts.write(Alert {
                 ship: foe,
                 kind: AlertKind::EnemyStruck { other: ship },

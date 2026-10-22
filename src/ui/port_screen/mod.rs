@@ -3,20 +3,20 @@
 
 mod model;
 
+use bevy::ecs::query::QueryData;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 
 use super::panel::{Shown, screen, show};
 use crate::allegiance::Favour;
 use crate::cargo::{Hold, Purse};
-use crate::clock::WorldClock;
 use crate::combat::Timbers;
 use crate::crew::{Complement, Crew, ShoreLeave};
 use crate::economy::jobs::{AcceptJob, Carrier, Job};
 use crate::economy::market::{Market, Trade, Trader};
 use crate::escorts::{AcceptEscort, Escort};
 use crate::factions::{Colours, Standing};
-use crate::goods::Goods;
 use crate::officers::{Berth, Officer, OfficerAct, OfficerOrder, Quarterdeck, posts};
 use crate::pardons::{Plea, SeekPardon};
 use crate::player::Player;
@@ -30,7 +30,7 @@ use crate::shipyard::{
     BuyShip, PartExchange, RepairOrder, SellPrize, TakeCommand, check_purchase, prize_value,
     repair_cost,
 };
-use crate::ui::{ago, fate_text, nearest_port, tale_text};
+use crate::ui::{Tales, ago, fate_text};
 use crate::word::{GiveAccount, Knowledge, Ledger};
 use model::{
     AccountListing, Action, Candidate, Condition, Context, EscortListing, Listing, Offer,
@@ -75,44 +75,74 @@ fn close_port_screen(
     }
 }
 
+/// The player's ship lying in port, and her captain's record.
+#[derive(QueryData)]
+struct Ashore {
+    entity: Entity,
+    docked: &'static Docked,
+    hold: &'static Hold,
+    purse: &'static Purse,
+    crew: &'static Crew,
+    complement: &'static Complement,
+    class: &'static ShipClass,
+    timbers: &'static Timbers,
+    rigging: &'static Rigging,
+    colours: Option<&'static Colours>,
+    standing: &'static Standing,
+    service: &'static Service,
+    knowledge: &'static Knowledge,
+}
+
+/// A prize, as the yard would value her.
+#[derive(QueryData)]
+struct Prized {
+    entity: Entity,
+    name: &'static Name,
+    prize: &'static Prize,
+    docked: &'static Docked,
+    class: &'static ShipClass,
+    timbers: &'static Timbers,
+    rigging: &'static Rigging,
+    hold: &'static Hold,
+}
+
+/// The exchange's business: contracts, and escorts asked for.
+#[derive(SystemParam)]
+struct ExchangeBoard<'w, 's> {
+    jobs: Query<'w, 's, (Entity, &'static Job, Option<&'static Carrier>)>,
+    escorts: Query<'w, 's, (Entity, &'static Escort)>,
+}
+
 /// Rebuilds the panel when what it should show has changed. The model is
 /// built every frame while docked: it is small, and comparing it is far
 /// simpler than tracking every value it depends on.
 fn refresh(
     view: Res<View>,
-    goods: Res<Goods>,
-    player: Single<
-        (
-            (Entity, &Docked, &Hold, &Purse, &Crew, &Complement),
-            (&ShipClass, &Timbers, &Rigging, Option<&Colours>),
-            (&Standing, &Service, &Knowledge),
-        ),
-        With<Player>,
-    >,
-    prizes: Query<(
-        Entity,
-        &Name,
-        &Prize,
-        &Docked,
-        &ShipClass,
-        &Timbers,
-        &Rigging,
-        &Hold,
-    )>,
+    tales: Tales,
+    player: Single<Ashore, With<Player>>,
+    prizes: Query<Prized>,
     ports: Query<(&Name, &Port, &Favour, &Market)>,
-    jobs: Query<(Entity, &Job, Option<&Carrier>)>,
-    (escorts, ledger, clock): (Query<(Entity, &Escort)>, Res<Ledger>, Res<WorldClock>),
-    anchorages: Query<(&Name, &Transform), With<Port>>,
+    board: ExchangeBoard,
+    ledger: Res<Ledger>,
     officers: Query<(Entity, &Name, &Officer, &Berth)>,
-    names: Query<&Name>,
     panel: Single<(Entity, &mut Shown<Action>)>,
     mut commands: Commands,
 ) {
-    let (
-        (ship, docked, hold, purse, crew, complement),
-        (class, timbers, rigging, colours),
-        (standing, service, knowledge),
-    ) = *player;
+    let AshoreItem {
+        entity: ship,
+        docked,
+        hold,
+        purse,
+        crew,
+        complement,
+        class,
+        timbers,
+        rigging,
+        colours,
+        standing,
+        service,
+        knowledge,
+    } = player.into_inner();
     let (entity, mut shown) = panel.into_inner();
     let Ok((port_name, port, favour, market)) = ports.get(docked.port) else {
         return;
@@ -124,7 +154,7 @@ fn refresh(
             .map(|(_, _, officer, berth)| (officer, berth)),
     );
     let context = Context {
-        goods: &goods,
+        goods: &tales.goods,
         port_entity: docked.port,
         port_name: port_name.as_str(),
         port,
@@ -136,18 +166,19 @@ fn refresh(
             crew,
             complement,
         },
-        jobs: jobs
+        jobs: board.jobs
             .iter()
             // Jobs other ships carry aren't the player's business.
             .filter(|(_, _, carrier)| carrier.is_none_or(|carrier| carrier.0 == ship))
             .map(|(entity, job, carrier)| Listing {
                 entity,
                 job,
-                destination: names.get(job.destination).map_or("?", Name::as_str),
+                destination: tales.name(job.destination),
                 carried: carrier.is_some(),
             })
             .collect(),
-        escorts: escorts
+        escorts: board
+            .escorts
             .iter()
             .filter(|(_, escort)| match escort.escort {
                 Some(guard) => guard == ship,
@@ -156,9 +187,9 @@ fn refresh(
             .map(|(entity, escort)| EscortListing {
                 entity,
                 escort,
-                ward: names.get(escort.ward).map_or("?", Name::as_str),
-                destination: names.get(escort.destination).map_or("?", Name::as_str),
-                cargo: jobs
+                ward: tales.name(escort.ward),
+                destination: tales.name(escort.destination),
+                cargo: board.jobs
                     .iter()
                     .find(|(_, job, carrier)| {
                         carrier.is_some_and(|carrier| carrier.0 == escort.ward)
@@ -175,13 +206,7 @@ fn refresh(
             .filter(|news| news.known_at.contains(&docked.port))
             .filter_map(|news| knowledge.of(news.id))
             .map(|tale| {
-                tale_text(
-                    &goods,
-                    tale,
-                    clock.elapsed,
-                    |entity| names.get(entity).map_or("?", Name::as_str).to_string(),
-                    |at| nearest_port(&anchorages, at),
-                )
+                tales.tell(tale)
             })
             .collect(),
         accounts: ledger
@@ -191,7 +216,7 @@ fn refresh(
                 asked: format!(
                     "{} was lost {}, with you in those waters. How was she lost?",
                     loss.name,
-                    ago(clock.elapsed - loss.at)
+                    ago(tales.clock.elapsed - loss.at)
                 ),
                 choices: loss
                     .accounts(ship)
@@ -220,7 +245,7 @@ fn refresh(
             .map(|offered| Offer {
                 class: offered,
                 cost: check_purchase(
-                    &goods,
+                    &tales.goods,
                     port,
                     &offered,
                     PartExchange {
@@ -236,16 +261,22 @@ fn refresh(
             .collect(),
         prizes: prizes
             .iter()
-            .filter(|(_, _, prize, prize_docked, ..)| {
-                prize.captor == ship && prize_docked.port == docked.port
-            })
+            .filter(|prized| prized.prize.captor == ship && prized.docked.port == docked.port)
             .map(
-                |(entity, name, _, _, class, timbers, rigging, hold)| PrizeListing {
+                |PrizedItem {
+                     entity,
+                     name,
+                     class,
+                     timbers,
+                     rigging,
+                     hold,
+                     ..
+                 }| PrizeListing {
                     entity,
                     name: name.as_str(),
                     timbers: timbers.0,
                     rigging: rigging.0,
-                    value: prize_value(&goods, class, timbers.0, rigging.0, hold),
+                    value: prize_value(&tales.goods, class, timbers.0, rigging.0, hold),
                 },
             )
             .collect(),
@@ -272,87 +303,107 @@ fn refresh(
     show(&mut commands, (entity, &mut shown), content, act);
 }
 
+/// The orders a captain gives in port, one for each button that orders
+/// something.
+#[derive(SystemParam)]
+struct PortOrders<'w> {
+    trades: MessageWriter<'w, Trade>,
+    accepts: MessageWriter<'w, AcceptJob>,
+    escorts: MessageWriter<'w, AcceptEscort>,
+    cast_off: MessageWriter<'w, CastOff>,
+    repairs: MessageWriter<'w, RepairOrder>,
+    sales: MessageWriter<'w, SellPrize>,
+    commands: MessageWriter<'w, TakeCommand>,
+    purchases: MessageWriter<'w, BuyShip>,
+    shore_leave: MessageWriter<'w, ShoreLeave>,
+    hires: MessageWriter<'w, OfficerOrder>,
+    joins: MessageWriter<'w, Join>,
+    pleas: MessageWriter<'w, SeekPardon>,
+    accounts: MessageWriter<'w, GiveAccount>,
+}
+
+impl PortOrders<'_> {
+    /// `ship`'s captain gives the order `action` stands for, if it's one.
+    fn give(&mut self, ship: Entity, action: Action) {
+        match action {
+            // Going about town isn't an order.
+            Action::Go(_) => {}
+            Action::Trade {
+                good,
+                quantity,
+                side,
+            } => {
+                self.trades.write(Trade {
+                    ship,
+                    good,
+                    quantity,
+                    side,
+                });
+            }
+            Action::Accept(job) => {
+                self.accepts.write(AcceptJob { ship, job });
+            }
+            Action::AcceptEscort(escort) => {
+                self.escorts.write(AcceptEscort { ship, escort });
+            }
+            Action::CastOff => {
+                self.cast_off.write(CastOff { ship });
+            }
+            Action::Repair => {
+                self.repairs.write(RepairOrder { ship });
+            }
+            Action::SellPrize(prize) => {
+                self.sales.write(SellPrize { prize });
+            }
+            Action::TakeCommand(prize) => {
+                self.commands.write(TakeCommand { prize });
+            }
+            Action::BuyShip(class) => {
+                self.purchases.write(BuyShip { ship, class });
+            }
+            Action::ShoreLeave => {
+                self.shore_leave.write(ShoreLeave { ship });
+            }
+            Action::Hire(officer) => {
+                self.hires.write(OfficerOrder {
+                    ship,
+                    officer,
+                    act: OfficerAct::Hire,
+                });
+            }
+            Action::Join(group) => {
+                self.joins.write(Join {
+                    captain: ship,
+                    group,
+                });
+            }
+            Action::Petition(nation) => {
+                self.pleas.write(SeekPardon {
+                    captain: ship,
+                    nation,
+                    plea: Plea::Petition,
+                });
+            }
+            Action::GiveAccount { lost, says } => {
+                self.accounts.write(GiveAccount { ship, lost, says });
+            }
+        }
+    }
+}
+
 /// Turns a pressed button into an order, or a move around town.
 fn act(
     activate: On<Activate>,
     actions: Query<&Action>,
     player: Single<Entity, With<Player>>,
     mut view: ResMut<View>,
-    mut trades: MessageWriter<Trade>,
-    (mut accepts, mut escorts): (MessageWriter<AcceptJob>, MessageWriter<AcceptEscort>),
-    mut cast_off: MessageWriter<CastOff>,
-    mut repairs: MessageWriter<RepairOrder>,
-    mut sales: MessageWriter<SellPrize>,
-    (mut commands, mut purchases): (MessageWriter<TakeCommand>, MessageWriter<BuyShip>),
-    mut shore_leave: MessageWriter<ShoreLeave>,
-    mut hires: MessageWriter<OfficerOrder>,
-    mut joins: MessageWriter<Join>,
-    (mut pleas, mut accounts): (MessageWriter<SeekPardon>, MessageWriter<GiveAccount>),
+    mut orders: PortOrders,
 ) {
     let Ok(&action) = actions.get(activate.entity) else {
         return;
     };
-    let ship = *player;
     match action {
         Action::Go(to) => *view = to,
-        Action::Trade {
-            good,
-            quantity,
-            side,
-        } => {
-            trades.write(Trade {
-                ship,
-                good,
-                quantity,
-                side,
-            });
-        }
-        Action::Accept(job) => {
-            accepts.write(AcceptJob { ship, job });
-        }
-        Action::AcceptEscort(escort) => {
-            escorts.write(AcceptEscort { ship, escort });
-        }
-        Action::CastOff => {
-            cast_off.write(CastOff { ship });
-        }
-        Action::Repair => {
-            repairs.write(RepairOrder { ship });
-        }
-        Action::SellPrize(prize) => {
-            sales.write(SellPrize { prize });
-        }
-        Action::TakeCommand(prize) => {
-            commands.write(TakeCommand { prize });
-        }
-        Action::BuyShip(class) => {
-            purchases.write(BuyShip { ship, class });
-        }
-        Action::ShoreLeave => {
-            shore_leave.write(ShoreLeave { ship });
-        }
-        Action::Hire(officer) => {
-            hires.write(OfficerOrder {
-                ship,
-                officer,
-                act: OfficerAct::Hire,
-            });
-        }
-        Action::Join(group) => {
-            joins.write(Join {
-                captain: ship,
-                group,
-            });
-        }
-        Action::Petition(nation) => {
-            pleas.write(SeekPardon {
-                captain: ship,
-                nation,
-                plea: Plea::Petition,
-            });
-        }
-        Action::GiveAccount { lost, says } => {
-            accounts.write(GiveAccount { ship, lost, says });
-        }
+        order => orders.give(*player, order),
     }
 }
