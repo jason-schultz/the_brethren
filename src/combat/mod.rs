@@ -124,7 +124,8 @@ pub enum FireControl {
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Engaged {
     pub enemy: Entity,
-    /// Whether she started it. Aggressors pursue; the attacked choose.
+    /// Whether she presses the attack: she started it, or was ordered to
+    /// turn on her attacker. Aggressors pursue; the attacked choose.
     pub aggressor: bool,
 }
 
@@ -219,26 +220,31 @@ impl Plugin for CombatPlugin {
     }
 }
 
+/// Sets a ship on her target. Attacking a ship is a deed; turning on one
+/// that's attacking her is not, though she presses it home all the same.
 fn engage(
     mut orders: MessageReader<EngageOrder>,
-    targets: Query<Flag, Attackable>,
+    targets: Query<(Flag, Option<&Engaged>), Attackable>,
     mut deeds: MessageWriter<Deed>,
     mut commands: Commands,
 ) {
     for order in orders.read() {
-        let Ok(flag) = targets.get(order.target) else {
+        let Ok((flag, theirs)) = targets.get(order.target) else {
             continue;
         };
         if order.ship == order.target {
             continue;
         }
-        if let Some(deed) = Deed::to_ship(
-            order.ship,
-            DeedKind::Attacked,
-            order.target,
-            flag.colours,
-            flag.serves,
-        ) {
+        let answering = theirs.is_some_and(|theirs| theirs.aggressor && theirs.enemy == order.ship);
+        if !answering
+            && let Some(deed) = Deed::to_ship(
+                order.ship,
+                DeedKind::Attacked,
+                order.target,
+                flag.colours,
+                flag.serves,
+            )
+        {
             deeds.write(deed);
         }
         // Dropping her route hands the helm to her tactic.
@@ -680,6 +686,7 @@ fn strike_or_sink(
 mod tests {
     use super::*;
     use crate::cargo::Hold;
+    use crate::factions::{Colours, Nation};
     use crate::goods::Goods;
     use crate::math::heading_to_direction;
     use crate::ship_class::ShipClass;
@@ -770,6 +777,41 @@ mod tests {
         assert!(
             world.get::<Timbers>(attacker).unwrap().0 < 1.0,
             "never fired back"
+        );
+    }
+
+    #[test]
+    fn turning_on_an_attacker_is_no_attack_of_her_own() {
+        let mut app = battle_app();
+        let attacker = sloop(&mut app, Vec3::ZERO, 0.0, 12, 8, 0.0);
+        let defender = sloop(&mut app, Vec3::new(300.0, 0.0, 0.0), 0.0, 12, 8, 0.0);
+        app.world_mut()
+            .entity_mut(attacker)
+            .insert(Colours(Nation::PIRATES));
+        app.world_mut()
+            .entity_mut(defender)
+            .insert(Colours(Nation::ENGLAND));
+        engage_order(&mut app, attacker, defender);
+        run_seconds(&mut app, 1.0);
+        engage_order(&mut app, defender, attacker);
+        let mut doers = Vec::new();
+        run_checked(&mut app, 1.0, |world| {
+            let deeds = world.resource::<Messages<Deed>>();
+            doers.extend(
+                deeds
+                    .iter_current_update_messages()
+                    .filter(|deed| deed.kind == DeedKind::Attacked)
+                    .map(|deed| deed.doer),
+            );
+        });
+        assert!(!doers.contains(&defender), "her answer was no attack");
+        assert_eq!(
+            app.world().get::<Engaged>(defender),
+            Some(&Engaged {
+                enemy: attacker,
+                aggressor: true
+            }),
+            "she presses it home"
         );
     }
 

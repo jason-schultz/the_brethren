@@ -14,8 +14,10 @@ use serde::{Deserialize, Serialize};
 use crate::alert::{Alert, AlertKind, fell_below};
 use crate::cargo::{Hold, Purse};
 use crate::clock::DAY;
+use crate::combat::Engaged;
 use crate::economy::Refusal;
 use crate::goods::Goods;
+use crate::hunting::{CHASE_MORALE_PER_DAY, Chase};
 use crate::officers::Afterguard;
 use crate::port::{Docked, Location, Port};
 use crate::prizes::Prize;
@@ -32,9 +34,9 @@ pub const LOW_PROVISIONS_DAYS: f64 = 3.0;
 const STARVATION_LOSS: f64 = 0.1;
 /// A new crew's morale: steady.
 pub const NEW_CREW_MORALE: f32 = 50.0;
-/// Morale settles toward these in port and at sea...
+/// Morale settles toward these in port and at sea: a steady crew...
 const RESTING_IN_PORT: f32 = 60.0;
-const RESTING_AT_SEA: f32 = 45.0;
+pub const RESTING_AT_SEA: f32 = 45.0;
 /// ...by this many points a day, and a starving crew's falls this fast.
 const SETTLING_PER_DAY: f32 = 4.0;
 const STARVING_PER_DAY: f32 = 15.0;
@@ -310,12 +312,34 @@ fn man_the_sails(mut ships: Query<Hands>) {
     }
 }
 
-/// Morale settles, and a sullen crew in port drifts away.
-fn keep_spirits(time: Res<Time>, mut ships: Query<(&mut Crew, Has<Docked>, Option<&Afterguard>)>) {
+/// A crew as its spirits are kept.
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct Spirited {
+    crew: &'static mut Crew,
+    docked: Has<Docked>,
+    afterguard: Option<&'static Afterguard>,
+    chase: Option<&'static Chase>,
+    engaged: Has<Engaged>,
+}
+
+/// Morale settles, a chase that hasn't come to action wears it down, and a
+/// sullen crew in port drifts away.
+fn keep_spirits(time: Res<Time>, mut ships: Query<Spirited>) {
     let days = time.delta_secs_f64() / DAY;
-    for (mut crew, docked, afterguard) in &mut ships {
+    for SpiritedItem {
+        mut crew,
+        docked,
+        afterguard,
+        chase,
+        engaged,
+    } in &mut ships
+    {
         let resting = resting_morale(docked, afterguard.map_or(0.0, Afterguard::morale));
-        let morale = settle(crew.morale, resting, crew.is_starving(), days as f32);
+        let mut morale = settle(crew.morale, resting, crew.is_starving(), days as f32);
+        if !engaged && chase.is_some_and(|chase| chase.quarry().is_some()) {
+            morale = (morale - CHASE_MORALE_PER_DAY * days as f32).max(0.0);
+        }
         if morale != crew.morale {
             crew.morale = morale;
         }
@@ -488,6 +512,44 @@ mod tests {
             .spawn((men, hold, Purse(500), Docked { port }))
             .id();
         (app, ship)
+    }
+
+    #[test]
+    fn a_chase_that_comes_to_nothing_wears_the_men_down() {
+        let (mut app, ship) = in_port(RESTING_AT_SEA, 20);
+        let quarry = app.world_mut().spawn_empty().id();
+        let mut chase = Chase::default();
+        chase.keep_after(Some(quarry), 0.0, RESTING_AT_SEA);
+        let (fighting, idle) = (
+            app.world_mut()
+                .spawn((
+                    Crew::new(20),
+                    chase,
+                    Engaged {
+                        enemy: quarry,
+                        aggressor: true,
+                    },
+                ))
+                .id(),
+            app.world_mut().spawn(Crew::new(20)).id(),
+        );
+        app.world_mut()
+            .entity_mut(ship)
+            .remove::<Docked>()
+            .insert(chase);
+        let morale = |app: &App, ship| app.world().get::<Crew>(ship).unwrap().morale;
+        let at_sea = morale(&app, idle);
+        run_seconds(&mut app, 3_600.0);
+        // Less the little it settles back toward the resting level.
+        let cost = (CHASE_MORALE_PER_DAY - SETTLING_PER_DAY) / 24.0;
+        let lost = RESTING_AT_SEA - morale(&app, ship);
+        assert!((lost - cost).abs() < 0.05, "an hour's chase cost {lost}");
+        assert_eq!(
+            morale(&app, fighting),
+            morale(&app, idle),
+            "action is no chase"
+        );
+        assert!((morale(&app, idle) - at_sea).abs() < 0.5);
     }
 
     #[test]

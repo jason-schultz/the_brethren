@@ -17,6 +17,7 @@ use bevy::prelude::*;
 use crate::alert::SIGHTING_RANGE;
 use crate::clock::{DAY, HOUR};
 use crate::combat::{DISENGAGE_DISTANCE, Engaged, Struck, Sunk};
+use crate::crew::RESTING_AT_SEA;
 use crate::factions::{Colours, GroupKind, Nation, Relations, Standing, Terms};
 use crate::map::Land;
 use crate::patrols::Patrol;
@@ -35,20 +36,45 @@ const CHASE_SLACK: f32 = 300.0;
 const BOLT_ANGLES: [f32; 6] = [0.0, 15.0, 30.0, 45.0, 60.0, 75.0];
 /// She runs only for open water at least this far from land, meters.
 const SEA_ROOM: f32 = 500.0;
-/// A hunter gives up a chase she's kept up this long, seconds...
+/// A hunter with a steady crew gives up a chase she's kept up this long,
+/// seconds; an eager crew keeps it up longer and a sullen one less, in
+/// proportion to their morale...
 const STERN_CHASE: f64 = 4.0 * HOUR;
+/// ...within these bounds...
+const PATIENCE: [f64; 2] = [HOUR, 8.0 * HOUR];
 /// ...and lets that quarry be this long.
 const LET_BE: f64 = DAY;
+/// A chase that hasn't come to action costs her crew this much morale a
+/// day: a fruitless one wears them down, and their patience with it.
+pub const CHASE_MORALE_PER_DAY: f32 = 48.0;
+/// A quarry lost from sight is still the same chase if she's sighted again
+/// within this long, seconds: one that keeps slipping over the horizon and
+/// back is a stern chase like any other.
+const LOST_SIGHT: f64 = HOUR;
 
-/// Who a hunter is after and since when, and the quarry she's given up
-/// on. It isn't saved: a loaded game's hunters start their chases afresh.
+/// Who a hunter is after, and the quarry she's given up on. It isn't
+/// saved: a loaded game's hunters start their chases afresh.
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
 pub struct Chase {
-    after: Option<(Entity, f64)>,
+    after: Option<Hunted>,
     let_be: Option<(Entity, f64)>,
 }
 
+/// A chase: the quarry, when it began, and when she was last in sight.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Hunted {
+    quarry: Entity,
+    since: f64,
+    seen: f64,
+}
+
 impl Chase {
+    /// The quarry she's after, if any, though she may have lost sight of
+    /// her for now.
+    pub fn quarry(&self) -> Option<Entity> {
+        self.after.map(|after| after.quarry)
+    }
+
     /// The quarry she's letting be at `now`, if any.
     pub fn letting_be(&self, now: f64) -> Option<Entity> {
         self.let_be
@@ -56,28 +82,41 @@ impl Chase {
             .map(|(quarry, _)| quarry)
     }
 
-    /// Keeps after `quarry`, or nobody, at `now`: whether she's still after
-    /// her. After a stern chase, she isn't, and lets her be.
-    pub fn keep_after(&mut self, quarry: Option<Entity>, now: f64) -> bool {
-        match (quarry, self.after) {
-            (None, _) => {
-                self.after = None;
-                false
-            }
-            (Some(quarry), Some((was, since))) if was == quarry => {
-                let given_up = now - since > STERN_CHASE;
-                if given_up {
+    /// Keeps after `quarry`, the ship in sight she'd go after, or nobody,
+    /// at `now`, with her crew at `morale`: whether she's after a ship in
+    /// sight. A quarry lost from sight is remembered a while, and the
+    /// chase goes on if she's seen again. After a stern chase, as long as
+    /// her crew will stand for, she gives up, and lets her be.
+    pub fn keep_after(&mut self, quarry: Option<Entity>, now: f64, morale: f32) -> bool {
+        let Some(quarry) = quarry else {
+            self.after = self.after.filter(|after| now - after.seen <= LOST_SIGHT);
+            return false;
+        };
+        match self.after {
+            Some(after) if after.quarry == quarry && now - after.seen <= LOST_SIGHT => {
+                if now - after.since > patience(morale) {
                     self.after = None;
                     self.let_be = Some((quarry, now + LET_BE));
+                    return false;
                 }
-                !given_up
+                self.after = Some(Hunted { seen: now, ..after });
             }
-            (Some(quarry), _) => {
-                self.after = Some((quarry, now));
-                true
+            _ => {
+                self.after = Some(Hunted {
+                    quarry,
+                    since: now,
+                    seen: now,
+                });
             }
         }
+        true
     }
+}
+
+/// How long a crew at `morale` will keep up a chase, seconds.
+pub fn patience(morale: f32) -> f64 {
+    let [least, most] = PATIENCE;
+    (STERN_CHASE * f64::from(morale / RESTING_AT_SEA)).clamp(least, most)
 }
 
 /// Who is hunting.
@@ -282,23 +321,73 @@ mod tests {
             Entity::from_raw_u32(2).unwrap(),
         );
         let mut chase = Chase::default();
-        assert!(chase.keep_after(Some(quarry), 0.0));
-        assert!(chase.keep_after(Some(quarry), STERN_CHASE));
+        // In sight all the while.
+        for minutes in 0..=240 {
+            assert!(chase.keep_after(Some(quarry), f64::from(minutes) * 60.0, RESTING_AT_SEA));
+        }
         assert!(
-            !chase.keep_after(Some(quarry), STERN_CHASE + 1.0),
+            !chase.keep_after(Some(quarry), STERN_CHASE + 1.0, RESTING_AT_SEA),
             "gave up"
         );
         assert_eq!(chase.letting_be(STERN_CHASE + 2.0), Some(quarry));
         assert_eq!(chase.letting_be(STERN_CHASE + 2.0 + LET_BE), None);
         assert!(
-            chase.keep_after(Some(other), STERN_CHASE + 2.0),
+            chase.keep_after(Some(other), STERN_CHASE + 2.0, RESTING_AT_SEA),
             "another is fair game"
         );
-        assert!(!chase.keep_after(None, STERN_CHASE + 3.0));
+        assert!(!chase.keep_after(None, STERN_CHASE + 3.0, RESTING_AT_SEA));
         assert!(
-            chase.keep_after(Some(other), STERN_CHASE + 4.0),
-            "a chase lost from sight starts afresh"
+            chase.keep_after(
+                Some(other),
+                STERN_CHASE + 3.0 + LOST_SIGHT + 1.0,
+                RESTING_AT_SEA
+            ),
+            "a chase long lost from sight starts afresh"
         );
+        assert!(chase.keep_after(Some(other), 2.0 * STERN_CHASE, RESTING_AT_SEA));
+    }
+
+    #[test]
+    fn an_eager_crew_keeps_up_a_chase_longer_than_a_sullen_one() {
+        assert_eq!(patience(RESTING_AT_SEA), STERN_CHASE, "a steady crew");
+        assert!(patience(90.0) > patience(RESTING_AT_SEA));
+        assert!(patience(25.0) < patience(RESTING_AT_SEA));
+        assert_eq!(patience(0.0), PATIENCE[0]);
+        assert_eq!(patience(100.0), PATIENCE[1]);
+        // A sullen crew gives up two hours in, where a steady one wouldn't.
+        let quarry = Entity::from_raw_u32(1).unwrap();
+        let mut chase = Chase::default();
+        assert!(chase.keep_after(Some(quarry), 0.0, 20.0));
+        for minutes in 1..=120 {
+            chase.keep_after(Some(quarry), f64::from(minutes) * 60.0, 20.0);
+        }
+        assert_eq!(chase.letting_be(2.0 * HOUR), Some(quarry), "gave up");
+    }
+
+    #[test]
+    fn a_quarry_slipping_out_of_sight_and_back_is_still_a_stern_chase() {
+        let quarry = Entity::from_raw_u32(1).unwrap();
+        let mut chase = Chase::default();
+        let mut now = 0.0;
+        // In sight, then over the horizon, every twenty minutes.
+        while now <= STERN_CHASE {
+            assert!(
+                chase.keep_after(Some(quarry), now, RESTING_AT_SEA),
+                "kept after her at {now}"
+            );
+            assert!(!chase.keep_after(None, now + 600.0, RESTING_AT_SEA));
+            assert_eq!(
+                chase.quarry(),
+                Some(quarry),
+                "remembered while out of sight"
+            );
+            now += 1_200.0;
+        }
+        assert!(
+            !chase.keep_after(Some(quarry), now, RESTING_AT_SEA),
+            "gave up"
+        );
+        assert_eq!(chase.letting_be(now), Some(quarry));
     }
 
     #[test]

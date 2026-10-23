@@ -123,6 +123,8 @@ pub enum Record {
     },
     /// A battle ended.
     Battle(Battle),
+    /// A hunter went after a ship she'd sighted.
+    Chase(Chase),
     /// How things stand, once a game day.
     Snapshot(Box<Snapshot>),
 }
@@ -273,6 +275,35 @@ pub struct Side {
     pub timbers: [f32; 2],
     /// Rigging at the start and the end, from 1 (sound) to 0.
     pub rigging: [f32; 2],
+    /// Where she was when it began.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub began_at: Option<Place>,
+}
+
+/// Where a ship was: meters east and north of the map's origin, and the
+/// nearest port, kilometers off.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Place {
+    pub at: [f32; 2],
+    pub port: String,
+    pub km: f32,
+}
+
+/// A hunter going after a ship she'd sighted, `km` off.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Chase {
+    pub hunter: Spotted,
+    pub quarry: Spotted,
+    pub km: f32,
+}
+
+/// A ship in a chase, and where she was.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Spotted {
+    pub ship: String,
+    pub role: Role,
+    pub nation: Option<String>,
+    pub place: Place,
 }
 
 /// How things stand.
@@ -488,6 +519,11 @@ mod tests {
             crew: [30, 24],
             timbers: [1.0, 0.8],
             rigging: [1.0, 0.6],
+            began_at: Some(Place {
+                at: [-1_200.0, 3_400.0],
+                port: "Kingston".into(),
+                km: 3.6,
+            }),
         };
         let battle = Line {
             day: 2.5,
@@ -499,7 +535,26 @@ mod tests {
                 loser: Some(1),
             }),
         };
-        let lines = [header(FORMAT), note(1.0, "sailing is slow"), battle];
+        let spotted = |ship: &str, role| Spotted {
+            ship: ship.into(),
+            role,
+            nation: None,
+            place: Place {
+                at: [0.0, 0.0],
+                port: "Port Royal".into(),
+                km: 1.5,
+            },
+        };
+        let chase = Line {
+            day: 2.3,
+            real: 29.0,
+            record: Record::Chase(Chase {
+                hunter: spotted("Ranger", Role::Raider),
+                quarry: spotted("Dove", Role::Merchant),
+                km: 6.2,
+            }),
+        };
+        let lines = [header(FORMAT), note(1.0, "sailing is slow"), chase, battle];
         let log = read(&log_of(&lines)).unwrap();
         assert_eq!(log.run, Run::Soak);
         assert_eq!(log.seed, Some(7));

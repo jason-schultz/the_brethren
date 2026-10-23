@@ -11,6 +11,7 @@ use bevy::prelude::*;
 use crate::cargo::{Hold, Purse};
 use crate::clock::{DAY, WorldClock};
 use crate::combat::EngageOrder;
+use crate::crew::Crew;
 use crate::economy::market::Market;
 use crate::factions::{Colours, GroupKind, Nation, Relations, Serves, nations};
 use crate::goods::Goods;
@@ -149,6 +150,7 @@ struct PatrolShip {
     at: &'static Transform,
     hold: &'static mut Hold,
     route: Option<&'static Route>,
+    crew: &'static Crew,
     chase: &'static mut Chase,
 }
 
@@ -195,7 +197,9 @@ fn patrol(
             at.translation,
             ship.chase.letting_be(now),
         );
-        if ship.chase.keep_after(quarry.map(|(target, _)| target), now)
+        if ship
+            .chase
+            .keep_after(quarry.map(|(target, _)| target), now, ship.crew.morale)
             && let Some((target, quarry)) = quarry
         {
             let heading_for = route.and_then(|route| route.waypoints.back().copied());
@@ -327,7 +331,7 @@ mod tests {
     use crate::alert::{Alert, AlertKind};
     use crate::combat::tactics::battered;
     use crate::combat::{Engaged, Struck, Timbers};
-    use crate::crew::{Complement, Crew};
+    use crate::crew::Complement;
     use crate::factions::Standing;
     use crate::map::Land;
     use crate::new_game::new_game;

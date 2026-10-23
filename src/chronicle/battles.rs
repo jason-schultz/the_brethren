@@ -1,16 +1,21 @@
 //! Battles, from the first ship engaging to both drawing off: who fought
-//! in what, what each lost, and how it ended. Every ship's battles are
-//! noted, not only the player's: they're how class matchups are judged.
+//! in what, where, what each lost, and how it ended. Every ship's battles
+//! are noted, not only the player's: they're how class matchups are
+//! judged. So is every chase before them: who a hunter went after, from
+//! where, and how far off she sighted her.
+
+use std::collections::HashMap;
 
 use bevy::ecs::query::QueryItem;
 use bevy::prelude::*;
-use chronicle::{Battle, BattleEnd, Record, Side};
+use chronicle::{Battle, BattleEnd, Record, Side, Spotted};
 
-use super::{Chronicle, Noting, Roles, role};
+use super::{Chronicle, Harbours, Noting, Roles, place, role};
 use crate::clock::{DAY, WorldClock};
 use crate::combat::{Battery, Engaged, Struck, Sunk, Timbers};
 use crate::crew::Crew;
 use crate::factions::{Colours, Deed, DeedKind};
+use crate::hunting::Chase;
 use crate::sailing::Rigging;
 use crate::ship_class::ShipClass;
 
@@ -19,7 +24,7 @@ pub(super) fn plugin(app: &mut App) {
         .add_observer(open_battle)
         .add_observer(strike)
         .add_observer(sink)
-        .add_systems(Last, follow_battles.in_set(Noting));
+        .add_systems(Last, (follow_chases, follow_battles).in_set(Noting));
 }
 
 /// The battles being fought.
@@ -63,11 +68,13 @@ type Fighting<'a> = (
     (&'a Crew, &'a Timbers, &'a Rigging),
     Option<&'a Colours>,
     Roles,
+    &'a Transform,
 );
 
-/// A ship's side, as she is now: at the start and the end alike.
+/// A ship's side as it begins: she is as she is now, and where.
 fn side(
-    (name, class, battery, (crew, timbers, rigging), colours, roles): QueryItem<Fighting>,
+    (name, class, battery, (crew, timbers, rigging), colours, roles, at): QueryItem<Fighting>,
+    harbours: &Harbours,
 ) -> Side {
     Side {
         ship: name.to_string(),
@@ -78,6 +85,7 @@ fn side(
         crew: [crew.count; 2],
         timbers: [timbers.0; 2],
         rigging: [rigging.0; 2],
+        began_at: Some(place(at.translation, harbours)),
     }
 }
 
@@ -86,6 +94,7 @@ fn open_battle(
     add: On<Add<Engaged>>,
     engaged: Query<&Engaged>,
     ships: Query<Fighting>,
+    harbours: Harbours,
     clock: Res<WorldClock>,
     mut battles: ResMut<Battles>,
 ) {
@@ -110,7 +119,7 @@ fn open_battle(
     battles.0.push(Fight {
         began: clock.elapsed / DAY,
         ships: [ship, enemy],
-        sides: [side(us), side(them)],
+        sides: [side(us, &harbours), side(them, &harbours)],
         fates: [None, None],
     });
 }
@@ -124,6 +133,47 @@ fn strike(add: On<Add<Struck>>, mut battles: ResMut<Battles>) {
 fn sink(add: On<Add<Sunk>>, mut battles: ResMut<Battles>) {
     for fight in &mut battles.0 {
         fight.mark(add.entity, BattleEnd::Sunk);
+    }
+}
+
+/// A ship as a chase notes her.
+type Sighting<'a> = (&'a Name, &'a Transform, Option<&'a Colours>, Roles);
+
+fn spotted((name, at, colours, roles): QueryItem<Sighting>, harbours: &Harbours) -> Spotted {
+    Spotted {
+        ship: name.to_string(),
+        role: role(roles),
+        nation: colours.map(|colours| colours.0.to_string()),
+        place: place(at.translation, harbours),
+    }
+}
+
+/// Notes each hunter going after a quarry she wasn't after before.
+fn follow_chases(
+    hunters: Query<(Entity, &Chase)>,
+    ships: Query<Sighting>,
+    harbours: Harbours,
+    mut after: Local<HashMap<Entity, Entity>>,
+    mut chronicle: ResMut<Chronicle>,
+) {
+    after.retain(|&hunter, _| hunters.contains(hunter));
+    for (hunter, chase) in &hunters {
+        let Some(quarry) = chase.quarry() else {
+            after.remove(&hunter);
+            continue;
+        };
+        if after.insert(hunter, quarry) == Some(quarry) {
+            continue;
+        }
+        let Ok([hunter, quarry]) = ships.get_many([hunter, quarry]) else {
+            continue;
+        };
+        let km = hunter.1.translation.distance(quarry.1.translation) / 1_000.0;
+        chronicle.note(Record::Chase(chronicle::Chase {
+            hunter: spotted(hunter, &harbours),
+            quarry: spotted(quarry, &harbours),
+            km,
+        }));
     }
 }
 
@@ -175,7 +225,9 @@ mod tests {
     use crate::chronicle::Run;
     use crate::chronicle::tests::{noted, noting_app};
     use crate::combat::EngageOrder;
+    use crate::factions::Nation;
     use crate::merchants::{Merchant, Plan};
+    use crate::port::Port;
     use crate::raiders::{Raid, Raider};
 
     fn battles(app: &mut App) -> Vec<Battle> {
@@ -228,6 +280,7 @@ mod tests {
             crew: [20; 2],
             timbers: [1.0; 2],
             rigging: [1.0; 2],
+            began_at: None,
         }
     }
 
@@ -274,6 +327,53 @@ mod tests {
         assert_eq!(battle.sides[1].role, chronicle::Role::Merchant);
         assert_eq!(battle.sides[1].crew, [20, 12]);
         assert_eq!(battle.sides[1].timbers, [1.0, 0.5]);
+        assert_eq!(
+            battle.sides[1].began_at.as_ref().map(|place| place.at),
+            Some([300.0, 0.0]),
+            "where she was when it began"
+        );
+    }
+
+    #[test]
+    fn a_chase_is_noted_once_with_where_the_hunter_sighted_her() {
+        let mut app = noting_app(Run::Soak);
+        app.world_mut().spawn((
+            Name::new("Kingston"),
+            Transform::from_xyz(0.0, 0.0, -10_000.0),
+            Port {
+                flag: Nation::ENGLAND,
+                town: Vec3::ZERO,
+                locations: Vec::new(),
+            },
+        ));
+        let hunter = ship(&mut app, "Ranger", Vec3::new(0.0, 0.0, -9_000.0));
+        let quarry = ship(&mut app, "Dove", Vec3::new(6_000.0, 0.0, -9_000.0));
+        let mut chase = Chase::default();
+        chase.keep_after(Some(quarry), 0.0, crate::crew::RESTING_AT_SEA);
+        app.world_mut().entity_mut(hunter).insert(chase);
+        let mut chases = Vec::new();
+        for _ in 0..3 {
+            app.update();
+            chases.extend(
+                noted(&mut app)
+                    .into_iter()
+                    .filter_map(|record| match record {
+                        Record::Chase(chase) => Some(chase),
+                        _ => None,
+                    }),
+            );
+        }
+        let [chase] = &chases[..] else {
+            panic!("expected one chase, got {chases:?}");
+        };
+        assert_eq!(
+            (&*chase.hunter.ship, &*chase.quarry.ship),
+            ("Ranger", "Dove")
+        );
+        assert_eq!(chase.km, 6.0);
+        assert_eq!(chase.hunter.place.port, "Kingston");
+        assert_eq!(chase.hunter.place.at, [0.0, 9_000.0]);
+        assert_eq!(chase.hunter.place.km, 1.0);
     }
 
     #[test]

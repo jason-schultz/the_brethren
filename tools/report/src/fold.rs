@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use chronicle::{Alarm, Battle, Happening, Line, Log, Record, Run, Snapshot};
+use chronicle::{Alarm, Battle, Chase, Happening, Line, Log, Record, Role, Run, Snapshot};
 use serde::{Deserialize, Serialize};
 
 /// The version of the report, to know a cached one is out of date.
@@ -333,6 +333,13 @@ impl Report {
             Record::WentOver { port, from, to } => self
                 .events
                 .push(dated(format!("{port} went over from {from} to {to}"))),
+            Record::Chase(Chase { hunter, quarry, km }) if quarry.role == Role::Player => {
+                self.events.push(dated(format!(
+                    "the {} ({}) went after the player {km:.1} km off, {:.1} km from {}",
+                    hunter.ship, hunter.role, hunter.place.km, hunter.place.port
+                )))
+            }
+            Record::Chase(_) => {}
             Record::Battle(battle) => self.battles.add(battle),
             Record::Snapshot(snapshot) => self.timelines.add(day, snapshot, &mut self.economy),
         }
@@ -477,6 +484,7 @@ pub(crate) mod tests {
             crew,
             timbers: [1.0, 0.5],
             rigging: [1.0, 0.5],
+            began_at: None,
         }
     }
 
@@ -552,6 +560,36 @@ pub(crate) mod tests {
         assert_eq!(session.by_place["at sea"], 90.0);
         assert!(report.ended);
         assert_eq!(report.real_seconds, 120.0);
+    }
+
+    #[test]
+    fn a_hunter_going_after_the_player_is_an_event_and_others_are_not() {
+        let spotted = |ship: &str, role| chronicle::Spotted {
+            ship: ship.into(),
+            role,
+            nation: None,
+            place: chronicle::Place {
+                at: [0.0, 0.0],
+                port: "Kingston".into(),
+                km: 3.0,
+            },
+        };
+        let chase = |quarry| {
+            Record::Chase(Chase {
+                hunter: spotted("Ranger", Role::Raider),
+                quarry: spotted("Dove", quarry),
+                km: 6.5,
+            })
+        };
+        let report = fold(&log(vec![
+            line(1.0, 1.0, chase(Role::Merchant)),
+            line(2.0, 2.0, chase(Role::Player)),
+        ]));
+        let events: Vec<_> = report.events.iter().map(|event| &*event.what).collect();
+        assert_eq!(
+            events,
+            ["the Ranger (raider) went after the player 6.5 km off, 3.0 km from Kingston"]
+        );
     }
 
     #[test]

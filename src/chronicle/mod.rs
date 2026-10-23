@@ -216,6 +216,24 @@ type Roles = (
     Has<crate::prizes::Prize>,
 );
 
+/// The ports, by name and anchorage, for saying where a ship was.
+#[cfg(feature = "chronicle")]
+type Harbours<'w, 's> = Query<'w, 's, (&'static Name, &'static Transform), With<crate::port::Port>>;
+
+/// Where `at` is: meters east and north, and the nearest of `harbours`.
+#[cfg(feature = "chronicle")]
+fn place(at: Vec3, harbours: &Harbours) -> chronicle::Place {
+    let nearest = harbours
+        .iter()
+        .map(|(name, anchorage)| (name, anchorage.translation.distance(at)))
+        .min_by_key(|&(_, meters)| bevy::math::FloatOrd(meters));
+    chronicle::Place {
+        at: [at.x, -at.z],
+        port: nearest.map_or_else(String::new, |(name, _)| name.to_string()),
+        km: nearest.map_or(0.0, |(_, meters)| meters / 1_000.0),
+    }
+}
+
 /// What a ship is, by her markers. A prize is a prize first, whatever she
 /// was before.
 #[cfg(feature = "chronicle")]

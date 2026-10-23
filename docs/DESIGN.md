@@ -276,6 +276,9 @@ Every ship, the player's included, runs on the same rules.
   - A run ashore at a tavern costs 3 pieces of eight a man and lifts it 25.
   - Sullen and mutinous men work slowly (sailing and reloading at 90% and
     80%), and desert in port, a tenth a day. Eager men work at 110%.
+  - A chase that hasn't come to action costs 2 an hour (§5.7, "A stern
+    chase is a long chase"), and a crew's morale sets how long its captain
+    keeps a chase up.
   - Low morale is what makes a mutiny possible (§5.9).
 - **Hiring.** Sailors sign on at the tavern for a bounty. Each port has its
   own pool of men, which refills over time. Nassau has plenty.
@@ -459,9 +462,18 @@ and reputation come with factions.
     her, straight away or as near it as open water allows, until she's out
     of sight. A man-of-war stands. A raider whose lane a warship has found
     gives up her cruise.
-  - *A stern chase is a long chase.* A hunter, warship or raider, who has
-    chased the same ship for 4 hours without taking her gives her up and
-    lets her be for a day.
+  - *A stern chase is a long chase.* A hunter, warship or raider, gives
+    up a ship she hasn't come to action with, and lets her be for a day,
+    after as long as her crew will stand for: 4 hours for a steady crew
+    (morale 45), in proportion to morale, between 1 hour and 8. A quarry
+    that slips out of sight is remembered for an hour; seen again within
+    it, it's the same chase. (Without that memory, a quarry that kept
+    slipping over the horizon and back started a fresh chase each time,
+    and a soak found a patrol chasing one raider for 26 days, 800 km off
+    the map.)
+  - *A fruitless chase wears the men down.* While a hunter is after a ship
+    and not yet in action with her, her crew loses 2 morale an hour, so
+    the longer a chase goes on, the sooner they'd give it up.
 
   Each rule is written once and every kind of ship follows it, so a new
   kind of ship needs only her business. The soaks found why: each rule
@@ -976,6 +988,23 @@ Tools for playtesting, not part of play.
 2. ✅ Crew morale (§5.1).
 3. ✅ Officers, hidden loyalty, mutiny, and betrayal (§5.9).
 4. Defection, and group leadership and coups.
+5. **Captains read their crews.** A fruitless chase already wears morale
+   down, and morale already sets how long a chase is kept up (§5.7).
+   The rest of it:
+   - *Long cruises tire men.* After two weeks or so from port, a crew's
+     resting level at sea slowly falls, so a cruise has a natural length
+     and a run ashore is worth paying for.
+   - *A sullen crew wants port.* An NPC captain whose crew is sullen ends
+     her cruise or patrol and makes for port, as she does when she's
+     battered (§5.7's seamanship), and gives them a run ashore there.
+   - *NPC mutiny.* NPC ships get officers and the same mutiny rules as
+     the player's (§5.9): a captain who drives a mutinous crew too long
+     may lose her ship, and a pirate crew may turn a navy prize-master
+     out. One rule for every ship.
+   - *Temperament.* A captain's nature, as data on her: dogged ones keep
+     a chase up longer, cautious ones give up and run sooner, rash ones
+     board when they shouldn't. It scales the same rules rather than
+     adding new ones.
 
 ### Milestone 5 — "Bigger ships"
 1. ✅ Ship classes as data, NPC fleets of mixed classes, stoutness in
@@ -1015,7 +1044,20 @@ port to use them. Every change here is checked against that table.
    blockade at night then needs no special rule: she times her run and
    steers between the guard ships. It helps raiders and smugglers
    everywhere, not only at blockades.
-5. **Blockades.** Warships of a nation at war with a port's owner, lying
+5. **High land blocks sight.** Sight is a plain 8 km circle today, so
+   ships see each other through islands and headlands. Found in a
+   playtest (October 2026): the Ranger, in Kingston harbour, sighted
+   the player running along the far side of the Palisadoes and came out
+   after her. That case is fair, since the spit is a few meters of sand
+   and a lookout aloft sees topsails over it. A ridge or a
+   mountainous island is not. So land is marked high or low in the map
+   data (high by default; low for spits, cays, and flat shores), and two
+   ships don't see each other when the line between them crosses high
+   land. One sight rule, used everywhere sight is used: hunting and
+   running, witnesses to deeds, sightings, escorts, wrecks. It goes
+   with darkness: the two together decide who sees whom, and a
+   headland becomes somewhere to hide behind.
+6. **Blockades.** Warships of a nation at war with a port's owner, lying
    off its anchorage, blockade it: ordinary trade can't reach it, so it
    starves. Supply that gets through is relief (§5.10), so the runner
    wins real favour there, and the blockading nation none. The navies'

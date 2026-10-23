@@ -479,7 +479,7 @@ fn raid_at_sea(
         let quarry = sea.nearest_quarry(Hunter::Raider(nation), at, raider.chase.letting_be(now));
         if raider
             .chase
-            .keep_after(quarry.map(|(target, _)| target), now)
+            .keep_after(quarry.map(|(target, _)| target), now, raider.crew.morale)
             && let Some((target, quarry)) = quarry
         {
             match pursue(at, heading_for, quarry) {
