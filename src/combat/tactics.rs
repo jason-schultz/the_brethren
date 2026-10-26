@@ -7,6 +7,7 @@ use bevy::prelude::*;
 
 use super::gunnery::GUN_RANGE;
 use crate::math::{angle_between, direction_to_heading, heading_to_direction, normalize_heading};
+use crate::tuning::TUNING;
 
 /// Ships this close, meters, can board one another.
 pub const BOARDING_RANGE: f32 = 60.0;
@@ -23,12 +24,6 @@ const LEAD: f32 = 60.0;
 const ON_STATION: f32 = 80.0;
 /// Timbers or rigging below this leave a ship unable to fight or run well.
 const COMPROMISED: f32 = 0.4;
-/// A captain strikes her colours when timbers fall below this...
-const STRIKE_TIMBERS: f32 = 0.25;
-/// ...or rigging, so she can't run...
-const STRIKE_RIGGING: f32 = 0.2;
-/// ...or her crew falls below this fraction of the hands she needs.
-const STRIKE_CREW: f32 = 0.5;
 
 /// Whether a ship with `timbers` and `rigging` left is too battered to fight
 /// or run well: no captain goes looking for a fight like this.
@@ -69,9 +64,9 @@ impl Strength {
 
     /// Beaten: time to strike her colours.
     pub fn beaten(&self) -> bool {
-        self.timbers < STRIKE_TIMBERS
-            || self.rigging < STRIKE_RIGGING
-            || (self.crew as f32) < self.min_crew as f32 * STRIKE_CREW
+        self.timbers < TUNING.strike_timbers
+            || self.rigging < TUNING.strike_rigging
+            || (self.crew as f32) < self.min_crew as f32 * TUNING.strike_crew
     }
 }
 

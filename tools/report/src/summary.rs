@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 
 use chronicle::{Run, Stamp};
 
+use crate::balance::{Verdict, shown as shown_measure};
 use crate::fold::{Matchup, Report, Series, Supply};
 use crate::headline::{compare, headline, shown, shown_change};
 
@@ -152,7 +153,12 @@ pub fn begun(report: &Report) -> String {
 
 /// The summary of run `id`, against `against` if given: another run, and
 /// its id.
-pub fn summary(id: &str, report: &Report, against: Option<(&str, &Report)>) -> String {
+pub fn summary(
+    id: &str,
+    report: &Report,
+    against: Option<(&str, &Report)>,
+    verdicts: &[Verdict],
+) -> String {
     let mut out = format!(
         "Run {id}: {}. {:.1} game days in {} real. {}\n",
         begun(report),
@@ -181,6 +187,26 @@ pub fn summary(id: &str, report: &Report, against: Option<(&str, &Report)>) -> S
                 what.detail
             )
         }),
+    );
+    list(
+        &mut out,
+        "Off the balance targets",
+        verdicts
+            .iter()
+            .filter(|verdict| verdict.off())
+            .filter_map(|verdict| {
+                let target = verdict.target;
+                let value = verdict.value?;
+                Some(format!(
+                    "{} ({}): {}, wants {}",
+                    target.name,
+                    target.unit,
+                    shown_measure(&target.id, value),
+                    target.range()
+                ))
+            })
+            .collect::<Vec<_>>()
+            .into_iter(),
     );
     list(
         &mut out,
@@ -404,7 +430,7 @@ mod tests {
 
     #[test]
     fn the_summary_leads_with_what_looks_broken_and_what_the_tester_said() {
-        let text = summary("run-b", &sample(), None);
+        let text = summary("run-b", &sample(), None, &[]);
         let first = text.lines().next().unwrap();
         assert!(first.starts_with("Run run-b: False Colours 0.1.0, play run begun 2023-11-14"));
         assert!(first.ends_with("6.0 game days in 3 min 20 s real. Ended cleanly."));
@@ -419,7 +445,7 @@ mod tests {
 
     #[test]
     fn long_lists_are_cut_short_newest_orders_first() {
-        let text = summary("run-b", &sample(), None);
+        let text = summary("run-b", &sample(), None, &[]);
         assert!(text.contains("Orders, latest first (30):\n- day 5.0: Buy 29 Sugar"));
         assert!(text.contains("- …and 10 more"));
     }
@@ -427,7 +453,7 @@ mod tests {
     #[test]
     fn against_another_run_the_summary_says_what_changed() {
         let before = fold(&log(vec![line(6.0, 100.0, Record::End)]));
-        let text = summary("run-b", &sample(), Some(("run-a", &before)));
+        let text = summary("run-b", &sample(), Some(("run-a", &before)), &[]);
         assert!(text.contains("Changed since run run-a"));
         assert!(text.contains("Battles: 0 → 1 (+1)"));
         assert!(text.contains("Alarms: 0 → 1 (+1)"));
@@ -446,7 +472,9 @@ mod tests {
                 message: "panicked at src/word.rs:10:5:\nno such ship".into(),
             },
         )]));
-        assert!(text_first_line(&summary("x", &report, None)).ends_with("CRASHED: no such ship"));
+        assert!(
+            text_first_line(&summary("x", &report, None, &[])).ends_with("CRASHED: no such ship")
+        );
         assert_eq!(duration(3_725.0), "1 h 02 min");
     }
 
@@ -493,7 +521,7 @@ mod tests {
                 "Sugar: over 2.0 a day; made 3.0 (Kingston 3.0); used 1.0 (Nassau 1.0)",
             ]
         );
-        assert!(summary("x", &report, None).contains("\nSupply and demand"));
+        assert!(summary("x", &report, None, &[]).contains("\nSupply and demand"));
     }
 
     fn text_first_line(text: &str) -> &str {

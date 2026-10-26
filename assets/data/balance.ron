@@ -1,0 +1,82 @@
+// Edited by hand or from the logbook's Tuning page (`cargo logbook`).
+// See docs/BALANCE.md.
+[
+    (
+        id: "prizes_per_100_days",
+        group: "Fights",
+        name: "Ships taken",
+        unit: "per 100 days",
+        min: Some(10.0),
+        max: Some(60.0),
+        hints: (
+            does: "How many ships are boarded and taken in 100 days, by anyone.",
+            play: "Too few and the sea feels safe and raiders toothless; too many and trade can't keep up, and the ports starve. Knobs that move it: striking thresholds, gunnery, sight range, chase length.",
+            history: "In the busiest years of the 1710s, pirates took hundreds of ships a year across the Atlantic. The game's corner of the Caribbean has three raiders, so a few dozen in 100 days is about right.",
+        ),
+    ),
+    (
+        id: "broke_off_share",
+        group: "Fights",
+        name: "Fights broken off",
+        unit: "share of all fights",
+        min: None,
+        max: Some(0.5),
+        hints: (
+            does: "The share of fights that end with the ships drawing apart, no one taken, struck, or sunk.",
+            play: "A few broken-off fights make running worth trying. Too many and fights feel pointless, and the world looks like ships bumping and parting. Knobs that move it: chase length, rigging damage, striking.",
+            history: "Most merchantmen struck to pirates without a fight, or after a single broadside. Warships fought to a decision more often than not.",
+        ),
+    ),
+    (
+        id: "gone_down_per_100_days",
+        group: "Losses",
+        name: "Ships gone down",
+        unit: "per 100 days",
+        min: Some(2.0),
+        max: Some(15.0),
+        hints: (
+            does: "Ships sunk, foundered, or wrecked in 100 days. Ships taken and burned by their captors aren't counted.",
+            play: "None at all and battle damage means nothing; a few, and a battered ship racing for port is a story. Too many and the sea empties. Knobs that move it: leaks, gunnery hull damage, striking.",
+            history: "Wooden ships rarely sank in battle, but many foundered afterwards, and storms and reefs took more than guns did.",
+        ),
+    ),
+    (
+        id: "foundered_per_100_days",
+        group: "Losses",
+        name: "Ships foundered",
+        unit: "per 100 days",
+        min: Some(1.0),
+        max: Some(8.0),
+        hints: (
+            does: "Ships the water gained on until they went down, in 100 days.",
+            play: "This is the leak model at work. None means the pumps always win; many means any damaged ship is doomed. Knobs that move it: the leak knobs, and men lost per hit (fewer men, weaker pumps).",
+            history: "Foundering was the usual way a battered wooden ship was lost.",
+        ),
+    ),
+    (
+        id: "most_fights_one_pair",
+        group: "Loops",
+        name: "Most fights between one pair",
+        unit: "fights",
+        min: None,
+        max: Some(5.0),
+        hints: (
+            does: "The most times the same two ships fought each other in the run.",
+            play: "A high number is nearly always a bug: two ships caught in a loop of engaging and breaking off. It's how the 71-fight raider loop was found.",
+            history: "A game check, not history.",
+        ),
+    ),
+    (
+        id: "ports_changed_per_100_days",
+        group: "The world",
+        name: "Ports changing hands",
+        unit: "per 100 days",
+        min: Some(1.0),
+        max: Some(4.0),
+        hints: (
+            does: "How many times a port went over from one nation to another in 100 days.",
+            play: "None and the world never changes, however you play; too many and nothing you build lasts. Moved by supply, favour, and the raiders' choice of lanes.",
+            history: "Caribbean ports changed hands often in wartime: Jamaica, Nassau, Saint-Domingue, and Curaçao were all taken or raided in this age.",
+        ),
+    ),
+]

@@ -40,7 +40,7 @@ use bevy::ecs::query::QueryData;
 use bevy::math::FloatOrd;
 use bevy::prelude::*;
 
-use crate::alert::{Alert, AlertKind, SIGHTING_RANGE};
+use crate::alert::{Alert, AlertKind, sighting_range};
 use crate::clock::{DAY, WorldClock};
 use crate::combat::rounds::Dice;
 use crate::economy::jobs::deadline;
@@ -112,7 +112,7 @@ pub struct NewsId(pub u64);
 pub enum Fate<S = Entity> {
     Taken(S),
     Sunk(S),
-    /// Wrecked aground or on a reef, by no one's hand.
+    /// Wrecked aground or on a reef, or foundered, by no one's hand.
     Wrecked,
 }
 
@@ -449,7 +449,7 @@ pub fn witnesses(
 ) -> Vec<Entity> {
     ships
         .filter(|&(ship, position)| {
-            !unseeing.contains(&ship) && position.distance(at) <= SIGHTING_RANGE
+            !unseeing.contains(&ship) && position.distance(at) <= sighting_range()
         })
         .map(|(ship, _)| ship)
         .collect()

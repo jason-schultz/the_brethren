@@ -19,11 +19,14 @@ use crate::port::{Docked, Refused};
 use crate::sailing::Hull;
 use crate::schedule::SimSet;
 use crate::service::{Post, StruckOff};
+use crate::tuning::TUNING;
 use crate::word::Purpose;
 
 /// Ships within this distance (meters) of each other are in sight: about
 /// the horizon from a masthead, at the map's half scale.
-pub const SIGHTING_RANGE: f32 = 8_000.0;
+pub fn sighting_range() -> f32 {
+    TUNING.sighting_range
+}
 
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Alert {
@@ -63,8 +66,12 @@ pub enum AlertKind {
     /// officer, is in irons.
     MutinyPutDown { leader: Option<Entity> },
     /// Her crew took the ship, led by her officer in this post if any, and
-    /// set her captain adrift. Raised for the boat she's left with.
-    Mutiny { leader: Option<Role> },
+    /// set her captain adrift. Raised for the boat she's left with, and the
+    /// port she was put ashore at if no one was left to row it.
+    Mutiny {
+        leader: Option<Role>,
+        ashore: Option<Entity>,
+    },
     /// Her officer in this post sold her out at `port`: her ship is
     /// seized. Raised for the boat she's left with.
     Betrayed { role: Role, port: Entity },
@@ -108,9 +115,21 @@ pub enum AlertKind {
     /// She's holed, running hard aground or on a reef, and her timbers
     /// are down to this percent.
     Holed { timbers: u8, on_reef: bool },
-    /// Her ship was wrecked; she and her men took to the boat. Her wreck,
-    /// if the water's shallow enough.
-    Wrecked { wreck: Option<Entity> },
+    /// Her ship was wrecked or foundered; she and her men took to the boat.
+    /// Her wreck, if the water's shallow enough, and the port she was put
+    /// ashore at if no one was left to row.
+    Wrecked {
+        wreck: Option<Entity>,
+        ashore: Option<Entity>,
+    },
+    /// Boarders from `by` took her ship and put her in the boat with the
+    /// men they spared; ashore at this port, if no one was left to row.
+    Taken { by: Entity, ashore: Option<Entity> },
+    /// No one was left to work her ship, so she took to the boat and left
+    /// her a derelict; ashore at this port, if no one was left to row.
+    Abandoned { ashore: Option<Entity> },
+    /// The water is gaining on her pumps.
+    Leaking,
     /// Her men are diving on a wreck.
     Salvaging { wreck: Entity },
     /// Word of a blow she struck against a nation has reached it.
@@ -238,7 +257,7 @@ fn keep_lookout(
             salvaging: None,
         };
         let seen = ships.iter().filter(|&(other, other_transform, ..)| {
-            other != ship && other_transform.translation.distance(position) <= SIGHTING_RANGE
+            other != ship && other_transform.translation.distance(position) <= sighting_range()
         });
         let mut now = Vec::new();
         for (other, _, flag) in seen {
@@ -296,7 +315,7 @@ mod tests {
             .world_mut()
             .spawn((
                 ShipClass::sloop().hull,
-                Transform::from_xyz(SIGHTING_RANGE * 2.0, 0.0, 0.0),
+                Transform::from_xyz(sighting_range() * 2.0, 0.0, 0.0),
             ))
             .id();
         app.update();

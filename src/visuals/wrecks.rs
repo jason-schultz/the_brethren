@@ -4,7 +4,7 @@
 use bevy::prelude::*;
 
 use super::labels::{LabelStyle, WorldLabel, world_label};
-use crate::alert::SIGHTING_RANGE;
+use crate::alert::sighting_range;
 use crate::camera::CameraRig;
 use crate::player::Player;
 use crate::word::{Happening, Knowledge};
@@ -39,7 +39,7 @@ fn label_wreck(add: On<Add<Wreck>>, names: Query<&Name>, mut commands: Commands)
 /// Whether the captain at `at`, knowing what `knowledge` holds, knows of
 /// `wreck` lying at `lies`: she's heard of it, or she can see it.
 fn known(knowledge: &Knowledge, at: Vec3, wreck: Entity, lies: Vec3) -> bool {
-    at.distance(lies) <= SIGHTING_RANGE
+    at.distance(lies) <= sighting_range()
         || knowledge.0.iter().any(|tale| {
             matches!(tale.event, Happening::Wrecked { wreck: Some(heard), .. } if heard == wreck)
         })

@@ -71,7 +71,8 @@ The Brethren, which fit only the pirates and only men.)
   on the right and fade; a call that stops the clock stays pinned until
   the captain resumes. A battle box shows only while engaged.
 - **Action bar and menu.** Along the bottom, an action bar (fire port,
-  fire starboard, board, battle style, follow ship, on keys 1 to 5) and a
+  fire starboard, board, battle style, follow ship, strike colours, on
+  keys 1 to 6) and a
   menu of panels: Captain (C), Crew (R), Hold (H), Fleet (Tab), Nations
   (N), and Controls (F1), plus the influence overlay (M). Clicking a
   button and pressing its key are the same control. One panel is open at
@@ -409,8 +410,9 @@ ones are replaced at a port of their nation.
 
 ### 5.5 Battle (built)
 
-Right-click a ship at sea to engage her. Anyone can be attacked; standing
-and reputation come with factions.
+Right-click a ship at sea to engage her, within 3 km: farther off, a
+notice says how far she is, and you keep your course. Anyone can be
+attacked; standing and reputation come with factions.
 
 - **Battle styles.** The battle style control (4) cycles them, and the
   action bar shows which is active:
@@ -428,6 +430,21 @@ and reputation come with factions.
   (§5.1).
 - **Damage.** Rigging damage slows a ship. Crew losses weaken sail
   handling and boarding. Timbers at zero sink her.
+- **Leaks and pumps.** Every wooden ship takes water: a sound one only
+  seeps, and the more of her timbers are gone, the faster it comes in.
+  Her men pump as hard as they work her sails (the same share of her
+  minimum crew, morale, and sailing master), and a whole company holds
+  the water until she's down to a fifth of her timbers. Fewer hands lose
+  ground to it sooner, and with no one at the pumps even a sound ship
+  founders in about a day. Water gaining on the pumps eats her timbers,
+  and the captain is told when it starts. Out of a fight she founders at
+  nothing; in one, the enemy sank her. In port the harbour pumps her out.
+  So a battered ship that has lost half her men makes for a yard, or
+  goes down on the way.
+- **Striking.** The strike control (6) strikes your colours in a fight,
+  and you strike on your own when no one is left aboard to fight her.
+  A struck ship furls her sails, and can't sail or fire until she
+  hoists her colours again, once no one is engaging her.
 - **The enemy.** An attacked captain sizes you up (guns, stoutness,
   damage, and hands): if she's at least as strong, or you're badly battered, she fights broadside-on. Otherwise she
   runs, downwind if that opens the distance, firing as her guns bear.
@@ -437,7 +454,23 @@ and reputation come with factions.
 - **Boarding.** Within 60 m, the board control (3) boards. A struck ship is carried without a
   fight. Otherwise crews fight it out, and defenders count for 1.25 men
   each. Morale and a first mate make each man count for more or less. The victor takes her purse and as much cargo as fits; her
-  contracts are void.
+  contracts are void. Other captains board a ship that strikes to them,
+  and burn her.
+- **Losing your ship.** Taken by boarders, you're put in the ship's
+  boat with the men they spared. Foundered or wrecked, you take to it
+  with your men. Struck with no one left aboard and no one coming to
+  board her, you take to the boat with your strongbox and leave her a
+  *derelict*: under no colours, struck for good, filling as she lies.
+  Whenever the boat has no one to row it, whoever picks you up puts
+  you ashore at the nearest port. Sunk in battle, all is lost.
+- **Derelicts.** A struck ship with no one aboard can be engaged, to lay
+  her alongside and board her; that's no attack on anyone. Your spare
+  hands sail her as a prize, as with any other.
+- **After a fight.** Your ship, if her fight ends with no course of her
+  own, heaves to rather than sail on blind. Other captains' business
+  gives them a course, and one that was running keeps running until it
+  does (stopping her made raiders fall on the same merchant again and
+  again).
 - **Prizes.** Two spare hands (beyond the least that can sail your ship) sail her as a
   prize: a prize crew works her home under easy sail, so two sail her as
   well as a full crew. She
@@ -881,7 +914,8 @@ Tools for playtesting, not part of play.
 - **The chronicle** writes what happens in a run as it happens, one JSON
   record a line, in the logs folder beside the quicksave: news and how
   fast word of it reaches each nation, every battle with each side's class,
-  crew, and damage at its start and end, the player's standing as it
+  crew, and damage at its start and end, every chase, every ship that goes
+  down (how, and the crew and timbers she had left), the player's standing as it
   moves and why, her money, orders, controls, and alerts, nations coming
   to new terms, ports going over, and a snapshot of the world once a game
   day (relations, ships by role, every port's prices, memory). It's only
@@ -889,6 +923,12 @@ Tools for playtesting, not part of play.
   are kept, up to 200 MB.
 - **Notes.** F8 pauses and opens a box to type a note in, kept with a
   snapshot of that moment.
+- **Knobs and targets.** The numbers worth tuning live in
+  `assets/data/tuning.ron` and what a good soak looks like in
+  `assets/data/balance.ron`, each with hints on what it does, how it
+  changes play, and its history. The logbook's Tuning page edits both
+  and shows each target against the newest soak, and each soak's summary
+  lists the targets it missed. See `docs/BALANCE.md`.
 - **Alarms** are raised once each when something looks broken: a ship with
   a route that hasn't moved in a day, a position that isn't a number, a
   port with negative stock or a month without a good it needs, a war two
@@ -1010,8 +1050,20 @@ Tools for playtesting, not part of play.
 1. ✅ Ship classes as data, NPC fleets of mixed classes, stoutness in
    battle, buying ships at the shipyard, and models rigged by class (§5.1).
 2. Refits and upgrades: a few per hull, each one fixed advantage (copper
-   sheathing, more guns pierced, a bigger hold, more berths). Shot types.
-3. Better ship models and art.
+   sheathing, more guns pierced, a bigger hold, more berths).
+3. **Shot types, and where shot lands.** Each hit already lands in one
+   of three places: the hull (timbers), the rigging, or the men. Shot
+   types choose the aim, rather than modelling where each ball strikes:
+   - *Round shot* for the hull, as now.
+   - *Chain shot* for the rigging, to slow her and stop her running;
+     shorter range.
+   - *Grape* for the men, before boarding; short range only.
+   - *Between wind and water.* A dice roll sends some hull hits low,
+     each opening a leak of its own on top of her damage (§5.5's leaks
+     and pumps), so a lucky broadside can hole a sound ship. Her
+     carpenter plugs them, one at a time.
+   Loaded shot is chosen on the action bar; changing it takes a reload.
+4. Better ship models and art.
 
 ### Milestone 6 — "Lines of supply"
 The world must make what it uses. The logbook's supply-and-demand table

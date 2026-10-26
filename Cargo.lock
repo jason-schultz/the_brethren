@@ -2708,6 +2708,7 @@ dependencies = [
  "ron",
  "serde",
  "serde_json",
+ "tuning",
 ]
 
 [[package]]
@@ -4930,6 +4931,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower",
+ "tuning",
 ]
 
 [[package]]
@@ -5693,6 +5695,14 @@ name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
+
+[[package]]
+name = "tuning"
+version = "0.1.0"
+dependencies = [
+ "ron",
+ "serde",
+]
 
 [[package]]
 name = "twox-hash"

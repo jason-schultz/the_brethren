@@ -35,8 +35,14 @@ use gunnery::{Broadside, Damage, GUN_RANGE, RELOAD, bearing_broadside, damage, h
 use rounds::{Dice, Fighter, Move, Range, Round};
 use tactics::{BOARDING_RANGE, LIE_ALONGSIDE, Strength, Tactic, course, defend};
 
-/// Ships farther apart than this, meters, have broken off the action.
+/// Ships farther apart than this, meters, have broken off the action, and
+/// no ship can engage another from farther off.
 pub const DISENGAGE_DISTANCE: f32 = 3_000.0;
+
+/// Whether ships at `a` and `b` are near enough to fight.
+pub fn within_reach(a: Vec3, b: Vec3) -> bool {
+    a.distance(b) <= DISENGAGE_DISTANCE
+}
 /// How far ahead a helmsman in battle looks for land, meters...
 const LOOKOUT_AHEAD: f32 = 600.0;
 /// ...and how much sea room she keeps, meters.
@@ -140,6 +146,12 @@ pub struct Struck;
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Sunk;
 
+/// Order a ship in a fight to strike her colours.
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StrikeOrder {
+    pub ship: Entity,
+}
+
 /// Order a ship to attack another.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EngageOrder {
@@ -193,6 +205,7 @@ impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<EngageOrder>()
             .add_message::<FireOrder>()
+            .add_message::<StrikeOrder>()
             .add_message::<RoundOrder>()
             .add_message::<Volley>()
             .init_resource::<Dice>()
@@ -200,7 +213,8 @@ impl Plugin for CombatPlugin {
             .add_systems(
                 Update,
                 (
-                    (engage, queue_fire_orders, play_rounds).in_set(FrameSet::Orders),
+                    (engage, queue_fire_orders, play_rounds, strike_on_order)
+                        .in_set(FrameSet::Orders),
                     strike_or_sink.after(FrameSet::Orders),
                 ),
             )
@@ -220,23 +234,44 @@ impl Plugin for CombatPlugin {
     }
 }
 
-/// Sets a ship on her target. Attacking a ship is a deed; turning on one
-/// that's attacking her is not, though she presses it home all the same.
+/// A ship as one ordered to engage her sees her.
+#[derive(QueryData)]
+struct Quarry {
+    flag: Flag,
+    engaged: Option<&'static Engaged>,
+    at: &'static Transform,
+    crew: &'static Crew,
+    struck: Has<Struck>,
+}
+
+/// Sets a ship on her target, if she's within reach: a struck ship only
+/// if no one's left aboard her, to board her. Attacking a ship is a deed;
+/// turning on one that's attacking her is not, though she presses it home
+/// all the same, and nor is boarding a derelict.
 fn engage(
     mut orders: MessageReader<EngageOrder>,
-    targets: Query<(Flag, Option<&Engaged>), Attackable>,
+    ships: Query<&Transform>,
+    targets: Query<Quarry, Attackable>,
     mut deeds: MessageWriter<Deed>,
     mut commands: Commands,
 ) {
     for order in orders.read() {
-        let Ok((flag, theirs)) = targets.get(order.target) else {
+        let (Ok(at), Ok(quarry)) = (ships.get(order.ship), targets.get(order.target)) else {
             continue;
         };
-        if order.ship == order.target {
+        let open_to_her = !quarry.struck || quarry.crew.is_empty();
+        if order.ship == order.target
+            || !open_to_her
+            || !within_reach(at.translation, quarry.at.translation)
+        {
             continue;
         }
-        let answering = theirs.is_some_and(|theirs| theirs.aggressor && theirs.enemy == order.ship);
+        let flag = quarry.flag;
+        let answering = quarry
+            .engaged
+            .is_some_and(|theirs| theirs.aggressor && theirs.enemy == order.ship);
         if !answering
+            && !quarry.struck
             && let Some(deed) = Deed::to_ship(
                 order.ship,
                 DeedKind::Attacked,
@@ -295,32 +330,61 @@ fn join_battle(
     }
 }
 
+/// A ship in a fight, as breaking off sees her: where she is, and whether
+/// she has a course of her own and is the player's.
+#[derive(QueryData)]
+struct InAction {
+    entity: Entity,
+    engaged: &'static Engaged,
+    at: &'static Transform,
+    routed: Has<Route>,
+    is_player: Has<Player>,
+}
+
 /// Ends engagements whose enemy is gone, sunk, in port, or out of reach.
-/// Her quarry striking doesn't end it: there's boarding to come.
+/// Her quarry striking doesn't end it: there's boarding to come. The
+/// player's ship, with no course of her own, heaves to rather than sail on
+/// blind; other captains' business gives them a course, and a ship that
+/// was running keeps running until it does.
 fn break_off(
-    engaged: Query<(Entity, &Engaged, &Transform)>,
+    engaged: Query<InAction>,
     enemies: Query<&Transform, (Without<Docked>, Without<Sunk>)>,
+    mut helms: Query<&mut Helm>,
     mut commands: Commands,
 ) {
-    for (ship, engagement, transform) in &engaged {
-        let in_reach = enemies.get(engagement.enemy).is_ok_and(|enemy| {
-            enemy.translation.distance(transform.translation) <= DISENGAGE_DISTANCE
-        });
-        if !in_reach {
-            commands.entity(ship).remove::<Engaged>();
+    for InActionItem {
+        entity: ship,
+        engaged: engagement,
+        at: transform,
+        routed,
+        is_player,
+    } in &engaged
+    {
+        let in_reach = enemies
+            .get(engagement.enemy)
+            .is_ok_and(|enemy| within_reach(enemy.translation, transform.translation));
+        if in_reach {
+            continue;
+        }
+        commands.entity(ship).remove::<Engaged>();
+        if is_player
+            && !routed
+            && let Ok(mut helm) = helms.get_mut(ship)
+        {
+            helm.sails = Sails::Furled;
         }
     }
 }
 
 /// A struck ship nobody is engaging hoists her colours again and goes on
-/// her way.
+/// her way, unless there's no one left aboard her: she's a derelict.
 fn rehoist_colours(
-    struck: Query<Entity, With<Struck>>,
+    struck: Query<(Entity, &Crew), With<Struck>>,
     engaged: Query<&Engaged>,
     mut commands: Commands,
 ) {
-    for ship in &struck {
-        if !engaged.iter().any(|engaged| engaged.enemy == ship) {
+    for (ship, crew) in &struck {
+        if !crew.is_empty() && !engaged.iter().any(|engaged| engaged.enemy == ship) {
             commands.entity(ship).remove::<Struck>();
         }
     }
@@ -392,13 +456,8 @@ impl TargetItem<'_, '_> {
 /// A ship at sea and free of any fight: not in port, and not engaged.
 pub type FreeAtSea = (Without<Docked>, Without<Engaged>);
 
-/// A ship that can be engaged: armed, at sea, and neither struck nor sunk.
-type Attackable = (
-    With<Battery>,
-    Without<Docked>,
-    Without<Struck>,
-    Without<Sunk>,
-);
+/// A ship that might be engaged: armed, at sea, and afloat.
+type Attackable = (With<Battery>, Without<Docked>, Without<Sunk>);
 
 /// An engaged ship her tactic steers: one with no route of her own, and
 /// not struck.
@@ -623,8 +682,9 @@ fn play_rounds(
     }
 }
 
-/// Holed ships sink and beaten AI captains strike. The player never
-/// strikes on her own; she fights until she sinks or breaks off.
+/// Holed ships sink, beaten AI captains strike, and so does any ship with
+/// no one left aboard to fight her. The player otherwise strikes only when
+/// she chooses; she fights until she sinks, strikes, or breaks off.
 fn strike_or_sink(
     ships: Query<(Entity, &Engaged, Fighting, Has<Player>, Flag)>,
     mut helms: Query<&mut Helm>,
@@ -666,18 +726,56 @@ fn strike_or_sink(
                     cause: Cause::Battle(foe),
                 });
             }
-        } else if !is_player && fighting.strength().beaten() {
-            alerts.write(Alert {
-                ship: foe,
-                kind: AlertKind::EnemyStruck { other: ship },
-            });
-            commands
-                .entity(ship)
-                .remove::<(Engaged, Route)>()
-                .insert(Struck);
-            if let Ok(mut helm) = helms.get_mut(ship) {
-                helm.sails = Sails::Furled;
-            }
+        } else if fighting.crew.is_empty() || (!is_player && fighting.strength().beaten()) {
+            strike(
+                ship,
+                foe,
+                helms.get_mut(ship).ok(),
+                &mut alerts,
+                &mut commands,
+            );
+        }
+    }
+}
+
+/// `ship` strikes her colours to `foe`: she stops fighting and sailing, and
+/// waits to be boarded.
+fn strike(
+    ship: Entity,
+    foe: Entity,
+    helm: Option<Mut<Helm>>,
+    alerts: &mut MessageWriter<Alert>,
+    commands: &mut Commands,
+) {
+    alerts.write(Alert {
+        ship: foe,
+        kind: AlertKind::EnemyStruck { other: ship },
+    });
+    commands
+        .entity(ship)
+        .remove::<(Engaged, Route)>()
+        .insert(Struck);
+    if let Some(mut helm) = helm {
+        helm.sails = Sails::Furled;
+    }
+}
+
+/// A captain ordered to strike does, if she's in a fight.
+fn strike_on_order(
+    mut orders: MessageReader<StrikeOrder>,
+    mut ships: Query<(&Engaged, &mut Helm), Without<Struck>>,
+    mut alerts: MessageWriter<Alert>,
+    mut commands: Commands,
+) {
+    for order in orders.read() {
+        if let Ok((engaged, helm)) = ships.get_mut(order.ship) {
+            strike(
+                order.ship,
+                engaged.enemy,
+                Some(helm),
+                &mut alerts,
+                &mut commands,
+            );
         }
     }
 }
@@ -885,6 +983,7 @@ mod tests {
     fn ships_that_draw_apart_break_off() {
         let mut app = battle_app();
         let (raider, merchant) = raider_and_merchant(&mut app);
+        app.world_mut().entity_mut(raider).insert(Player);
         engage_order(&mut app, raider, merchant);
         app.update();
         app.world_mut()
@@ -892,8 +991,109 @@ mod tests {
             .unwrap()
             .translation = Vec3::new(-DISENGAGE_DISTANCE * 2.0, 0.0, 0.0);
         run_seconds(&mut app, 10.0);
-        assert!(app.world().get::<Engaged>(raider).is_none());
-        assert!(app.world().get::<Engaged>(merchant).is_none());
+        let world = app.world();
+        for ship in [raider, merchant] {
+            assert!(world.get::<Engaged>(ship).is_none());
+        }
+        let sails = |ship| world.get::<Helm>(ship).unwrap().sails;
+        assert_eq!(
+            sails(raider),
+            Sails::Furled,
+            "with no course of her own, the player heaves to"
+        );
+        assert_eq!(sails(merchant), Sails::Set, "the merchant keeps running");
+    }
+
+    #[test]
+    fn a_ship_out_of_reach_cannot_be_engaged_and_keeps_her_course() {
+        let mut app = battle_app();
+        let raider = sloop(&mut app, Vec3::ZERO, 0.0, 40, 8, 0.0);
+        let far_off = Vec3::new(DISENGAGE_DISTANCE * 3.0, 0.0, 0.0);
+        let merchant = sloop(&mut app, far_off, 0.0, 10, 4, 1.0);
+        let route = Route {
+            waypoints: [Vec3::new(0.0, 0.0, -50_000.0)].into(),
+            on_arrival: crate::navigation::Arrival::HeaveTo,
+        };
+        app.world_mut().entity_mut(raider).insert(route.clone());
+        engage_order(&mut app, raider, merchant);
+        run_seconds(&mut app, 1.0);
+        let world = app.world();
+        assert!(world.get::<Engaged>(raider).is_none());
+        assert!(world.get::<Engaged>(merchant).is_none());
+        assert!(world.get::<Route>(raider).is_some(), "her course is kept");
+    }
+
+    #[test]
+    fn a_ship_with_no_one_left_aboard_strikes_and_is_a_derelict() {
+        let mut app = battle_app();
+        let (raider, merchant) = raider_and_merchant(&mut app);
+        app.world_mut().entity_mut(merchant).insert(Player);
+        engage_order(&mut app, raider, merchant);
+        app.update();
+        app.world_mut().get_mut::<Crew>(merchant).unwrap().count = 0;
+        run_seconds(&mut app, 1.0);
+        assert!(
+            app.world().get::<Struck>(merchant).is_some(),
+            "even the player strikes with no one to fight her"
+        );
+        app.world_mut().entity_mut(raider).remove::<Engaged>();
+        run_seconds(&mut app, 10.0);
+        assert!(
+            app.world().get::<Struck>(merchant).is_some(),
+            "no one's aboard to hoist her colours again"
+        );
+    }
+
+    #[test]
+    fn a_derelict_can_be_engaged_to_board_her_and_that_is_no_attack() {
+        let mut app = battle_app();
+        let (raider, derelict) = raider_and_merchant(&mut app);
+        app.world_mut()
+            .entity_mut(derelict)
+            .insert((Struck, Colours(Nation::ENGLAND)));
+        app.world_mut().get_mut::<Crew>(derelict).unwrap().count = 0;
+        let manned = sloop(&mut app, Vec3::new(0.0, 0.0, 900.0), 0.0, 10, 4, 1.0);
+        app.world_mut().entity_mut(manned).insert(Struck);
+        engage_order(&mut app, raider, manned);
+        app.update();
+        assert!(
+            app.world().get::<Engaged>(raider).is_none(),
+            "a manned ship that's struck is left to her captor"
+        );
+        engage_order(&mut app, raider, derelict);
+        let mut attacks = 0;
+        run_checked(&mut app, 1.0, |world| {
+            attacks += world
+                .resource::<Messages<Deed>>()
+                .iter_current_update_messages()
+                .filter(|deed| deed.kind == DeedKind::Attacked)
+                .count();
+        });
+        assert_eq!(attacks, 0);
+        assert_eq!(
+            app.world().get::<Engaged>(raider).map(|e| e.enemy),
+            Some(derelict)
+        );
+    }
+
+    #[test]
+    fn a_captain_ordered_to_strike_does() {
+        let mut app = battle_app();
+        let (raider, merchant) = raider_and_merchant(&mut app);
+        app.world_mut().get_mut::<Crew>(merchant).unwrap().count = 40;
+        engage_order(&mut app, raider, merchant);
+        app.update();
+        app.world_mut()
+            .write_message(StrikeOrder { ship: merchant });
+        app.update();
+        let world = app.world();
+        assert!(world.get::<Struck>(merchant).is_some());
+        assert_eq!(world.get::<Helm>(merchant).unwrap().sails, Sails::Furled);
+        assert_eq!(
+            world.get::<Engaged>(raider).map(|e| e.enemy),
+            Some(merchant),
+            "her captor comes to board her"
+        );
     }
 
     #[test]

@@ -21,12 +21,12 @@ use crate::alert::{Alert, AlertKind};
 use crate::cargo::{Hold, Lading, Purse};
 use crate::clock::{DAY, HOUR, WorldClock};
 use crate::combat::rounds::Dice;
-use crate::combat::{Engaged, Timbers};
+use crate::combat::{Engaged, Struck, Timbers};
 use crate::crew::{Complement, Crew};
 use crate::economy::jobs::Carrier;
 use crate::factions::{Colours, Deed, DeedKind, Flag, Group, GroupKind, Nation};
 use crate::goods::{Carriage, Goods};
-use crate::loyalty::{Boat, Captaincy, chance_in};
+use crate::loyalty::{Captaincy, chance_in};
 use crate::map::Land;
 use crate::map::data::Terrain;
 use crate::navigation::Route;
@@ -97,13 +97,15 @@ pub enum Cause {
     Grounding,
     /// Holed on a reef.
     Reef,
+    /// The water gained on her pumps.
+    Foundered,
 }
 
 impl Cause {
     /// Whether her people lived to row for port and tell of it. Dead men
     /// tell no tales, and a burned prize's crew was set adrift already.
     fn survivors(self) -> bool {
-        matches!(self, Self::Grounding | Self::Reef)
+        matches!(self, Self::Grounding | Self::Reef | Self::Foundered)
     }
 
     /// How she was lost, as the truth of it.
@@ -111,7 +113,7 @@ impl Cause {
         match self {
             Self::Battle(by) => Fate::Sunk(by),
             Self::Burned(by) => Fate::Taken(by),
-            Self::Grounding | Self::Reef => Fate::Wrecked,
+            Self::Grounding | Self::Reef | Self::Foundered => Fate::Wrecked,
         }
     }
 }
@@ -215,6 +217,11 @@ pub fn salvage(goods: &Goods, wreck: &mut Wreck, tons: f64, room: f64) -> (u32, 
     (silver, haul)
 }
 
+/// Ships going down leave the world. To see one before she's gone, read
+/// [`Founder`] before this.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GoingDown;
+
 pub struct WrecksPlugin;
 
 impl Plugin for WrecksPlugin {
@@ -225,13 +232,14 @@ impl Plugin for WrecksPlugin {
             .add_systems(
                 Update,
                 go_down
+                    .in_set(GoingDown)
                     .after(FrameSet::Orders)
                     .after(crate::word::record_deeds),
             )
             .add_systems(
                 FixedUpdate,
                 (
-                    (run_aground, strike_reefs).in_set(SimSet::Resolve),
+                    (run_aground, strike_reefs, abandon_ship).in_set(SimSet::Resolve),
                     salvage_wrecks.in_set(SimSet::Economy),
                 ),
             );
@@ -406,25 +414,52 @@ fn go_down(
             }
         }
         if lost.is_player {
-            // The player sunk in battle stays where she went down.
-            if cause.survivors() {
-                let boat = Boat {
-                    at: position,
-                    heading: lost.heading.0,
-                    docked: None,
-                    hands: lost.crew.count,
-                    purse: 0,
-                };
+            // The player sunk in battle stays where she went down. Taken,
+            // she's put in the boat with her men who are left.
+            let kind = |ashore| match cause {
+                Cause::Battle(_) => None,
+                Cause::Burned(by) => Some(AlertKind::Taken { by, ashore }),
+                Cause::Grounding | Cause::Reef | Cause::Foundered => {
+                    Some(AlertKind::Wrecked { wreck, ashore })
+                }
+            };
+            let boat = captaincy.adrift(position, lost.heading.0, lost.crew.count, 0);
+            if let Some(kind) = kind(boat.docked) {
                 let boat = captaincy.lose(ship, boat, None);
-                alerts.write(Alert {
-                    ship: boat,
-                    kind: AlertKind::Wrecked { wreck },
-                });
+                alerts.write(Alert { ship: boat, kind });
             }
         } else {
             captaincy.commands.entity(ship).despawn();
         }
     }
+}
+
+/// The player's ship, struck with no one left aboard her.
+type Deserted = (With<Player>, With<Struck>);
+
+/// The player with no one left to work her ship, and no one coming to
+/// board her, takes to the boat with her strongbox and leaves her a
+/// derelict.
+fn abandon_ship(
+    mut player: Query<(Entity, &Transform, &Heading, &Crew, &mut Purse), Deserted>,
+    engaged: Query<&Engaged>,
+    mut captaincy: Captaincy,
+    mut alerts: MessageWriter<Alert>,
+) {
+    let Ok((ship, at, heading, crew, mut purse)) = player.single_mut() else {
+        return;
+    };
+    if !crew.is_empty() || engaged.iter().any(|engaged| engaged.enemy == ship) {
+        return;
+    }
+    let purse = std::mem::take(&mut purse.0);
+    let boat = captaincy.adrift(at.translation, heading.0, 0, purse);
+    let ashore = boat.docked;
+    let boat = captaincy.abandon(ship, boat);
+    alerts.write(Alert {
+        ship: boat,
+        kind: AlertKind::Abandoned { ashore },
+    });
 }
 
 /// Running aground hard holes a ship, and can break her up.
@@ -602,7 +637,7 @@ mod tests {
     use super::*;
     use crate::map::LandMass;
     use crate::ship_class::ShipClass;
-    use crate::test_support::{run_checked, sim_app};
+    use crate::test_support::{run_checked, run_seconds, sim_app};
     use crate::time_scale::MAX_STEP;
 
     #[test]
@@ -707,6 +742,86 @@ mod tests {
             .find(|news| matches!(news.event, Happening::Wrecked { wreck: Some(_), .. }))
             .unwrap();
         assert!(reef.boats.is_empty(), "no port to row for on this map");
+    }
+
+    /// A port with its anchorage at `at`.
+    fn port(app: &mut App, at: Vec3) -> Entity {
+        app.world_mut()
+            .spawn((
+                Name::new("Kingston"),
+                Port {
+                    flag: Nation::ENGLAND,
+                    town: at,
+                    locations: vec![crate::port::Location::Tavern],
+                },
+                Transform::from_translation(at),
+            ))
+            .id()
+    }
+
+    /// The player's ship in a boat, after she's lost her own.
+    fn players_boat(app: &mut App) -> (Entity, Option<Docked>) {
+        let world = app.world_mut();
+        let (boat, docked) = world
+            .query_filtered::<(Entity, Option<&Docked>), With<Player>>()
+            .single(world)
+            .unwrap();
+        (boat, docked.copied())
+    }
+
+    #[test]
+    fn the_player_taken_is_put_in_the_boat_and_with_no_one_to_row_put_ashore() {
+        let mut app = reef_sea();
+        let kingston = port(&mut app, Vec3::new(0.0, 0.0, 40_000.0));
+        let captor = merchant(&mut app, Vec3::new(100.0, 0.0, 0.0));
+        let ship = merchant(&mut app, Vec3::ZERO);
+        app.world_mut().entity_mut(ship).insert(Player);
+        // Her men fell defending her deck.
+        app.world_mut().get_mut::<Crew>(ship).unwrap().count = 0;
+        app.world_mut().write_message(Founder {
+            ship,
+            cause: Cause::Burned(captor),
+        });
+        app.update();
+        assert!(app.world().get_entity(ship).is_err(), "they burned her");
+        let (boat, docked) = players_boat(&mut app);
+        assert_ne!(boat, ship);
+        assert_eq!(docked.map(|docked| docked.port), Some(kingston));
+    }
+
+    #[test]
+    fn the_player_with_men_left_to_row_takes_to_the_boat_where_she_is() {
+        let mut app = reef_sea();
+        port(&mut app, Vec3::new(0.0, 0.0, 40_000.0));
+        let ship = merchant(&mut app, Vec3::ZERO);
+        app.world_mut().entity_mut(ship).insert(Player);
+        app.world_mut().write_message(Founder {
+            ship,
+            cause: Cause::Foundered,
+        });
+        app.update();
+        let (boat, docked) = players_boat(&mut app);
+        assert_eq!(docked, None);
+        assert_eq!(app.world().get::<Crew>(boat).unwrap().count, 10);
+    }
+
+    #[test]
+    fn the_player_with_no_one_left_aboard_leaves_her_ship_a_derelict() {
+        let mut app = reef_sea();
+        let kingston = port(&mut app, Vec3::new(0.0, 0.0, 40_000.0));
+        let ship = merchant(&mut app, Vec3::ZERO);
+        app.world_mut()
+            .entity_mut(ship)
+            .insert((Player, Struck, Colours(Nation::ENGLAND)));
+        app.world_mut().get_mut::<Crew>(ship).unwrap().count = 0;
+        run_seconds(&mut app, 600.0);
+        let (boat, docked) = players_boat(&mut app);
+        assert_eq!(docked.map(|docked| docked.port), Some(kingston));
+        assert_eq!(app.world().get::<Purse>(boat), Some(&Purse(50)));
+        let hulk = app.world().entity(ship);
+        assert!(hulk.contains::<Struck>(), "left a derelict");
+        assert!(!hulk.contains::<Colours>(), "under no colours");
+        assert_eq!(hulk.get::<Purse>(), Some(&Purse(0)));
     }
 
     #[test]

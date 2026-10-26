@@ -5,7 +5,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use tuning::Entry;
 
 use crate::fold::{REPORT_FORMAT, Report, fold};
 
@@ -14,6 +16,8 @@ use crate::fold::{REPORT_FORMAT, Report, fold};
 pub struct Store {
     pub logs: PathBuf,
     pub crashes: PathBuf,
+    /// The game's data folder, with its knobs and balance targets.
+    pub data: PathBuf,
 }
 
 /// A report as it's cached, with what it was folded from.
@@ -53,6 +57,28 @@ fn stamp(path: &Path) -> Option<(u64, u64)> {
 }
 
 impl Store {
+    /// The entries of one of the game's tuning files: its knobs, or its
+    /// balance targets.
+    pub fn tuning<T: DeserializeOwned + Entry>(&self, file: &str) -> Result<Vec<T>, String> {
+        let path = self.data.join(file);
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("couldn't read {}: {error}", path.display()))?;
+        tuning::parse(&text).map_err(|error| format!("{}: {error}", path.display()))
+    }
+
+    /// Writes `entries` to one of the game's tuning files, if they make
+    /// sense.
+    pub fn save_tuning<T: Serialize + Entry>(
+        &self,
+        file: &str,
+        entries: &[T],
+    ) -> Result<(), String> {
+        tuning::check(entries)?;
+        let path = self.data.join(file);
+        fs::write(&path, tuning::write(entries)?)
+            .map_err(|error| format!("couldn't write {}: {error}", path.display()))
+    }
+
     /// The runs in the logs folder, newest first.
     pub fn runs(&self) -> Vec<String> {
         stems(&self.logs, ".jsonl")
@@ -127,6 +153,7 @@ pub(crate) mod tests {
         let store = Store {
             logs: folder.join("logs"),
             crashes: folder.join("crashes"),
+            data: folder.join("data"),
         };
         fs::create_dir_all(&store.logs).unwrap();
         fs::create_dir_all(&store.crashes).unwrap();

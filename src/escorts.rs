@@ -14,7 +14,7 @@
 
 use bevy::prelude::*;
 
-use crate::alert::{Alert, AlertKind, SIGHTING_RANGE};
+use crate::alert::{Alert, AlertKind, sighting_range};
 use crate::cargo::Purse;
 use crate::clock::{DAY, HOUR, WorldClock};
 use crate::combat::Engaged;
@@ -36,9 +36,6 @@ pub const ESCORT_PATIENCE: f64 = 12.0 * HOUR;
 const FEE_SHARE: f64 = 0.5;
 /// ...but never less than this, in pieces of eight.
 const LEAST_FEE: u32 = 20;
-/// Her escort must be within this distance of her when she comes in,
-/// meters: in sight.
-pub const ESCORT_RANGE: f32 = SIGHTING_RANGE;
 /// How long her merchants wait for an account of her loss, days.
 pub const ACCOUNT_DAYS: f64 = 3.0;
 
@@ -241,7 +238,7 @@ fn settle_escorts(
                 DeedKind::LostWard
             }
             Some((ward_at, _)) if docked_at == Some(escort.destination) => {
-                if ward_at.translation.distance(guard_at.translation) > ESCORT_RANGE {
+                if ward_at.translation.distance(guard_at.translation) > sighting_range() {
                     alerts.write(Alert {
                         ship: guard,
                         kind: AlertKind::WardAlone { ward: escort.ward },
@@ -401,7 +398,7 @@ mod tests {
             .world_mut()
             .entity_mut(c.guard)
             .remove::<Docked>()
-            .insert(Transform::from_xyz(ESCORT_RANGE * 2.0, 0.0, 0.0));
+            .insert(Transform::from_xyz(sighting_range() * 2.0, 0.0, 0.0));
         let (alerts, deeds) = outcome(&mut c.app);
         assert_eq!(alerts, [AlertKind::WardAlone { ward: c.ward }]);
         assert!(deeds.is_empty());

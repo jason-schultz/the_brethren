@@ -6,7 +6,7 @@ Single-player Age-of-Sail sandbox game. Rust + Bevy 0.20, 3D with a top-down cam
 - `docs/CODING_STANDARDS.md`: mandatory rules (one hot path, no duplicated logic, KISS, testing).
 - `docs/DESIGN.md`: game vision, factions, systems, roadmap.
 
-Also: `docs/ASSET_SOURCES.md`, where to find free models, sounds, music and ship plans, and their licences; `docs/MODELS.md`, the spec and workflow for 3D models (run it with `/ship-model <class>`).
+Also: `docs/ASSET_SOURCES.md`, where to find free models, sounds, music and ship plans, and their licences; `docs/MODELS.md`, the spec and workflow for 3D models (run it with `/ship-model <class>`); `docs/BALANCE.md`, the knobs (`assets/data/tuning.ron`) and balance targets (`assets/data/balance.ron`), edited from the logbook's Tuning page. Before building a gameplay change, run `/design-check <feature>`.
 
 ## Commands
 
@@ -21,7 +21,8 @@ cargo logbook --summary                        # the newest run's summary, as te
 ```
 
 The repo is a Cargo workspace: the game at the root, `crates/chronicle` (the
-log's record types, shared), and `tools/report` (the `cargo logbook` server).
+log's record types, shared), `crates/tuning` (knobs and targets, shared), and
+`tools/report` (the `cargo logbook` server).
 Plain `cargo run`/`test`/`build` mean the game alone.
 
 Playtest logs: with the `chronicle` feature (on with `dev`) every run writes

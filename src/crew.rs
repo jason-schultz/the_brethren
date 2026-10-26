@@ -17,12 +17,13 @@ use crate::clock::DAY;
 use crate::combat::Engaged;
 use crate::economy::Refusal;
 use crate::goods::Goods;
-use crate::hunting::{CHASE_MORALE_PER_DAY, Chase};
+use crate::hunting::Chase;
 use crate::officers::Afterguard;
 use crate::port::{Docked, Location, Port};
 use crate::prizes::Prize;
 use crate::sailing::SailHandling;
 use crate::schedule::{FrameSet, SimSet};
+use crate::tuning::TUNING;
 
 /// Below this fraction of her minimum crew, a ship can't make sail at all.
 pub const SKELETON_FRACTION: f32 = 0.25;
@@ -110,6 +111,11 @@ impl Crew {
 
     pub fn is_starving(&self) -> bool {
         self.hungry_for > 0.0
+    }
+
+    /// Whether no one is left aboard to work her or fight her.
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
     }
 }
 
@@ -338,7 +344,7 @@ fn keep_spirits(time: Res<Time>, mut ships: Query<Spirited>) {
         let resting = resting_morale(docked, afterguard.map_or(0.0, Afterguard::morale));
         let mut morale = settle(crew.morale, resting, crew.is_starving(), days as f32);
         if !engaged && chase.is_some_and(|chase| chase.quarry().is_some()) {
-            morale = (morale - CHASE_MORALE_PER_DAY * days as f32).max(0.0);
+            morale = (morale - TUNING.chase_morale_per_day * days as f32).max(0.0);
         }
         if morale != crew.morale {
             crew.morale = morale;
@@ -541,7 +547,7 @@ mod tests {
         let at_sea = morale(&app, idle);
         run_seconds(&mut app, 3_600.0);
         // Less the little it settles back toward the resting level.
-        let cost = (CHASE_MORALE_PER_DAY - SETTLING_PER_DAY) / 24.0;
+        let cost = (TUNING.chase_morale_per_day - SETTLING_PER_DAY) / 24.0;
         let lost = RESTING_AT_SEA - morale(&app, ship);
         assert!((lost - cost).abs() < 0.05, "an hour's chase cost {lost}");
         assert_eq!(

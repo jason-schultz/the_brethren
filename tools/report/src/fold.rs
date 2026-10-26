@@ -3,11 +3,11 @@
 
 use std::collections::BTreeMap;
 
-use chronicle::{Alarm, Battle, Chase, Happening, Line, Log, Record, Role, Run, Snapshot};
+use chronicle::{Alarm, Battle, Chase, Happening, Line, Log, Lost, Record, Role, Run, Snapshot};
 use serde::{Deserialize, Serialize};
 
 /// The version of the report, to know a cached one is out of date.
-pub const REPORT_FORMAT: u32 = 3;
+pub const REPORT_FORMAT: u32 = 4;
 
 /// Values over game days.
 pub type Series = Vec<(f64, f64)>;
@@ -45,6 +45,9 @@ pub struct Report {
     pub orders: Vec<Dated<String>>,
     /// Nations coming to new terms, and ports going over.
     pub events: Vec<Dated<String>>,
+    /// How many times a port went over.
+    #[serde(default)]
+    pub went_over: u32,
     pub timelines: Timelines,
     pub battles: Battles,
     pub standing: Standing,
@@ -80,6 +83,9 @@ pub struct Battles {
     pub by_class: BTreeMap<String, Matchup>,
     /// By the two roles, "merchant v raider".
     pub by_role: BTreeMap<String, Matchup>,
+    /// Ships that went down, in battle or out of it, by how.
+    #[serde(default)]
+    pub lost: BTreeMap<String, u32>,
 }
 
 /// The battles between two kinds of ship, named in order.
@@ -246,6 +252,7 @@ pub fn fold(log: &Log) -> Report {
         logs: Vec::new(),
         orders: Vec::new(),
         events: Vec::new(),
+        went_over: 0,
         timelines: Timelines::default(),
         battles: Battles::default(),
         standing: Standing::default(),
@@ -330,9 +337,11 @@ impl Report {
             } => self
                 .events
                 .push(dated(format!("{a} and {b} are now {terms}"))),
-            Record::WentOver { port, from, to } => self
-                .events
-                .push(dated(format!("{port} went over from {from} to {to}"))),
+            Record::WentOver { port, from, to } => {
+                self.went_over += 1;
+                self.events
+                    .push(dated(format!("{port} went over from {from} to {to}")));
+            }
             Record::Chase(Chase { hunter, quarry, km }) if quarry.role == Role::Player => {
                 self.events.push(dated(format!(
                     "the {} ({}) went after the player {km:.1} km off, {:.1} km from {}",
@@ -340,6 +349,23 @@ impl Report {
                 )))
             }
             Record::Chase(_) => {}
+            Record::Lost(Lost {
+                ship,
+                cause,
+                crew,
+                timbers,
+            }) => {
+                count(&mut self.battles.lost, cause);
+                if ship.role == Role::Player {
+                    self.events.push(dated(format!(
+                        "the player's {} was lost ({cause}) with {crew} men left and {:.0}% of her timbers, {:.1} km from {}",
+                        ship.ship,
+                        timbers * 100.0,
+                        ship.place.km,
+                        ship.place.port
+                    )));
+                }
+            }
             Record::Battle(battle) => self.battles.add(battle),
             Record::Snapshot(snapshot) => self.timelines.add(day, snapshot, &mut self.economy),
         }
@@ -589,6 +615,41 @@ pub(crate) mod tests {
         assert_eq!(
             events,
             ["the Ranger (raider) went after the player 6.5 km off, 3.0 km from Kingston"]
+        );
+    }
+
+    #[test]
+    fn ships_lost_are_counted_by_cause_and_the_players_is_an_event() {
+        let lost = |role, cause: &str| {
+            Record::Lost(Lost {
+                ship: chronicle::Spotted {
+                    ship: "Dove".into(),
+                    role,
+                    nation: None,
+                    place: chronicle::Place {
+                        at: [0.0, 0.0],
+                        port: "Kingston".into(),
+                        km: 12.0,
+                    },
+                },
+                cause: cause.into(),
+                crew: 3,
+                timbers: 0.0,
+            })
+        };
+        let report = fold(&log(vec![
+            line(1.0, 1.0, lost(Role::Merchant, "foundered")),
+            line(2.0, 2.0, lost(Role::Raider, "foundered")),
+            line(3.0, 3.0, lost(Role::Player, "taken")),
+        ]));
+        assert_eq!(report.battles.lost["foundered"], 2);
+        assert_eq!(report.battles.lost["taken"], 1);
+        let events: Vec<_> = report.events.iter().map(|event| &*event.what).collect();
+        assert_eq!(
+            events,
+            [
+                "the player's Dove was lost (taken) with 3 men left and 0% of her timbers, 12.0 km from Kingston"
+            ]
         );
     }
 

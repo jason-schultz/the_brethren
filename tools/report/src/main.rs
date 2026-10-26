@@ -7,6 +7,7 @@
 //! run's summary instead, and `--summary <run>` another's.
 //! `--folder <dir>` reads the logs and crashes in `dir`.
 
+mod balance;
 mod chart;
 mod fold;
 mod headline;
@@ -14,6 +15,7 @@ mod pages;
 mod server;
 mod store;
 mod summary;
+mod tuning_page;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -22,6 +24,9 @@ use chronicle::{CRASHES, LOGS, user_file};
 use tokio::net::TcpListener;
 
 use crate::store::Store;
+
+/// The game's data folder, with its knobs and balance targets.
+const DATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/data");
 
 /// The port it serves on, out of the way of the usual ones.
 const PORT: u16 = 7716;
@@ -71,10 +76,12 @@ async fn main() -> ExitCode {
         Some(folder) => Store {
             logs: folder.join(LOGS),
             crashes: folder.join(CRASHES),
+            data: DATA.into(),
         },
         None => Store {
             logs: user_file(LOGS),
             crashes: user_file(CRASHES),
+            data: DATA.into(),
         },
     };
     if let Some(id) = args.summary {

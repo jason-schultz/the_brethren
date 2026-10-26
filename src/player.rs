@@ -5,7 +5,10 @@ use bevy::prelude::*;
 
 use crate::camera::Pointer;
 use crate::combat::gunnery::Broadside;
-use crate::combat::{Battery, EngageOrder, FireControl, FireOrder, Sunk};
+use crate::combat::{
+    Battery, DISENGAGE_DISTANCE, EngageOrder, FireControl, FireOrder, StrikeOrder, Struck, Sunk,
+    within_reach,
+};
 use crate::controls::{Control, ControlUsed, used};
 use crate::escorts::Escort;
 use crate::navigation::{Arrival, KeepCompany, SailOrder};
@@ -93,19 +96,24 @@ fn apply_battle_style(style: Res<BattleStyle>, mut player: Query<&mut FireContro
     }
 }
 
-/// The fire controls fire a broadside, under manual fire control, and the
-/// board control boards the enemy alongside.
+/// The fire controls fire a broadside, under manual fire control, the
+/// board control boards the enemy alongside, and the strike control
+/// strikes her colours to the enemy.
 fn order_broadsides(
     mut controls: MessageReader<ControlUsed>,
     player: Single<Entity, (With<Player>, Without<Sunk>)>,
     mut orders: MessageWriter<FireOrder>,
     mut boardings: MessageWriter<BoardOrder>,
+    mut strikes: MessageWriter<StrikeOrder>,
 ) {
     let ship = *player;
     for &ControlUsed(control) in controls.read() {
         match control {
             Control::Board => {
                 boardings.write(BoardOrder { ship });
+            }
+            Control::Strike => {
+                strikes.write(StrikeOrder { ship });
             }
             Control::FirePort => {
                 orders.write(FireOrder {
@@ -124,8 +132,13 @@ fn order_broadsides(
     }
 }
 
-/// The player's ship at sea and afloat.
-type PlayerAtSea = (With<Player>, Without<Docked>, Without<Sunk>);
+/// The player's ship at sea and afloat, with her colours flying.
+type PlayerAtSea = (
+    With<Player>,
+    Without<Docked>,
+    Without<Sunk>,
+    Without<Struck>,
+);
 
 /// Other armed ships than the player's.
 type OtherArmed = (With<Battery>, Without<Player>);
@@ -139,7 +152,7 @@ type OtherArmed = (With<Battery>, Without<Player>);
 fn order_sail_on_click(
     buttons: Res<ButtonInput<MouseButton>>,
     pointer: Pointer,
-    player: Single<Entity, PlayerAtSea>,
+    player: Single<(Entity, &Transform), PlayerAtSea>,
     ships: Query<(Entity, &Name, &Transform, Has<Docked>), OtherArmed>,
     ports: Query<(Entity, &Port, &Transform)>,
     wrecks: Query<&Transform, With<Wreck>>,
@@ -161,7 +174,7 @@ fn order_sail_on_click(
         .filter(|(.., at, _)| near(at.translation))
         .collect();
     clicked_ships.sort_by_key(|&(.., docked)| docked);
-    let ship = *player;
+    let (ship, here) = *player;
     let ward = |target| {
         wards
             .iter()
@@ -175,8 +188,16 @@ fn order_sail_on_click(
             });
             return;
         }
-        Some(&(target, _, _, false)) => {
-            engagements.write(EngageOrder { ship, target });
+        Some(&(target, name, at, false)) => {
+            if within_reach(here.translation, at.translation) {
+                engagements.write(EngageOrder { ship, target });
+            } else {
+                notices.post(format!(
+                    "{name} is {:.1} km off. Close within {:.0} km to engage her.",
+                    here.translation.distance(at.translation) / 1000.0,
+                    DISENGAGE_DISTANCE / 1000.0
+                ));
+            }
             return;
         }
         Some(&(_, name, _, true)) => notices.post(format!(
@@ -190,13 +211,13 @@ fn order_sail_on_click(
         .find(|(_, port, anchorage)| near(port.town) || near(anchorage.translation))
     {
         Some((port, _, anchorage)) => SailOrder {
-            ship: *player,
+            ship,
             destination: anchorage.translation,
             on_arrival: Arrival::Dock(port),
         },
         // Over a wreck, she lies where the divers can go down.
         None => SailOrder {
-            ship: *player,
+            ship,
             destination: wrecks
                 .iter()
                 .map(|lies| lies.translation)

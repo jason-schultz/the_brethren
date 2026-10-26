@@ -19,6 +19,7 @@ pub mod fleet;
 pub mod geometry;
 pub mod goods;
 pub mod hunting;
+pub mod leaks;
 pub mod loyalty;
 pub mod map;
 pub mod math;
@@ -42,6 +43,7 @@ pub mod ship_class;
 pub mod shipyard;
 pub mod time_control;
 pub mod time_scale;
+pub mod tuning;
 pub mod ui;
 pub mod user_files;
 pub mod visuals;
@@ -84,6 +86,7 @@ impl Plugin for SimulationPlugin {
                 port::PortPlugin,
                 crew::CrewPlugin,
                 combat::CombatPlugin,
+                leaks::LeaksPlugin,
                 prizes::PrizesPlugin,
                 fleet::FleetPlugin,
                 shipyard::ShipyardPlugin,

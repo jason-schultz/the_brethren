@@ -14,14 +14,15 @@ use bevy::ecs::system::SystemParam;
 use bevy::math::FloatOrd;
 use bevy::prelude::*;
 
-use crate::alert::SIGHTING_RANGE;
-use crate::clock::{DAY, HOUR};
+use crate::alert::sighting_range;
+use crate::clock::DAY;
 use crate::combat::{DISENGAGE_DISTANCE, Engaged, Struck, Sunk};
 use crate::crew::RESTING_AT_SEA;
 use crate::factions::{Colours, GroupKind, Nation, Relations, Standing, Terms};
 use crate::map::Land;
 use crate::patrols::Patrol;
 use crate::port::Docked;
+use crate::tuning::TUNING;
 use crate::wrecks::{SALVAGE_RANGE, Wreck};
 
 /// A hunter engages her quarry within this range, meters: well inside the
@@ -36,21 +37,10 @@ const CHASE_SLACK: f32 = 300.0;
 const BOLT_ANGLES: [f32; 6] = [0.0, 15.0, 30.0, 45.0, 60.0, 75.0];
 /// She runs only for open water at least this far from land, meters.
 const SEA_ROOM: f32 = 500.0;
-/// A hunter with a steady crew gives up a chase she's kept up this long,
-/// seconds; an eager crew keeps it up longer and a sullen one less, in
-/// proportion to their morale...
-const STERN_CHASE: f64 = 4.0 * HOUR;
-/// ...within these bounds...
-const PATIENCE: [f64; 2] = [HOUR, 8.0 * HOUR];
-/// ...and lets that quarry be this long.
+/// A hunter who gives up a chase lets that quarry be this long. How long
+/// she keeps one up, and how long a quarry lost from sight is still the
+/// same chase, are tuned (see [`crate::tuning`]).
 const LET_BE: f64 = DAY;
-/// A chase that hasn't come to action costs her crew this much morale a
-/// day: a fruitless one wears them down, and their patience with it.
-pub const CHASE_MORALE_PER_DAY: f32 = 48.0;
-/// A quarry lost from sight is still the same chase if she's sighted again
-/// within this long, seconds: one that keeps slipping over the horizon and
-/// back is a stern chase like any other.
-const LOST_SIGHT: f64 = HOUR;
 
 /// Who a hunter is after, and the quarry she's given up on. It isn't
 /// saved: a loaded game's hunters start their chases afresh.
@@ -89,11 +79,13 @@ impl Chase {
     /// her crew will stand for, she gives up, and lets her be.
     pub fn keep_after(&mut self, quarry: Option<Entity>, now: f64, morale: f32) -> bool {
         let Some(quarry) = quarry else {
-            self.after = self.after.filter(|after| now - after.seen <= LOST_SIGHT);
+            self.after = self
+                .after
+                .filter(|after| now - after.seen <= TUNING.lost_sight);
             return false;
         };
         match self.after {
-            Some(after) if after.quarry == quarry && now - after.seen <= LOST_SIGHT => {
+            Some(after) if after.quarry == quarry && now - after.seen <= TUNING.lost_sight => {
                 if now - after.since > patience(morale) {
                     self.after = None;
                     self.let_be = Some((quarry, now + LET_BE));
@@ -115,8 +107,8 @@ impl Chase {
 
 /// How long a crew at `morale` will keep up a chase, seconds.
 pub fn patience(morale: f32) -> f64 {
-    let [least, most] = PATIENCE;
-    (STERN_CHASE * f64::from(morale / RESTING_AT_SEA)).clamp(least, most)
+    let [least, most] = TUNING.patience;
+    (TUNING.stern_chase * f64::from(morale / RESTING_AT_SEA)).clamp(least, most)
 }
 
 /// Who is hunting.
@@ -210,7 +202,7 @@ pub fn evade(land: &Land, at: Vec3, heading_for: Option<Vec3>, hunter: Vec3) -> 
     let away = (at - hunter).normalize_or(Vec3::X);
     let running = heading_for.is_some_and(|end| {
         (end - at).dot(away) > 0.0
-            && end.distance(hunter) > at.distance(hunter) + SIGHTING_RANGE / 2.0
+            && end.distance(hunter) > at.distance(hunter) + sighting_range() / 2.0
     });
     if running {
         return None;
@@ -218,7 +210,7 @@ pub fn evade(land: &Land, at: Vec3, heading_for: Option<Vec3>, hunter: Vec3) -> 
     BOLT_ANGLES
         .iter()
         .flat_map(|&degrees| [degrees, -degrees])
-        .map(|degrees| at + Quat::from_rotation_y(degrees.to_radians()) * away * SIGHTING_RANGE)
+        .map(|degrees| at + Quat::from_rotation_y(degrees.to_radians()) * away * sighting_range())
         .find(|&bolt| land.clearance(bolt, bolt) >= SEA_ROOM)
 }
 
@@ -279,7 +271,7 @@ impl Sea<'_, '_> {
             .iter()
             .filter(|ship| {
                 Some(ship.entity) != letting_be
-                    && ship.at.translation.distance(at) <= SIGHTING_RANGE
+                    && ship.at.translation.distance(at) <= sighting_range()
             })
             .filter(|ship| is_quarry(hunter, &self.mark(ship), &self.relations))
             .map(|ship| (ship.entity, ship.at.translation))
@@ -296,7 +288,7 @@ impl Sea<'_, '_> {
             .iter()
             .filter(|hunter| {
                 hunter.warship
-                    && hunter.at.translation.distance(at) <= SIGHTING_RANGE
+                    && hunter.at.translation.distance(at) <= sighting_range()
                     && hunter.colours.is_some_and(|colours| {
                         is_quarry(Hunter::Navy(colours.0), &mark, &self.relations)
                     })
@@ -326,34 +318,38 @@ mod tests {
             assert!(chase.keep_after(Some(quarry), f64::from(minutes) * 60.0, RESTING_AT_SEA));
         }
         assert!(
-            !chase.keep_after(Some(quarry), STERN_CHASE + 1.0, RESTING_AT_SEA),
+            !chase.keep_after(Some(quarry), TUNING.stern_chase + 1.0, RESTING_AT_SEA),
             "gave up"
         );
-        assert_eq!(chase.letting_be(STERN_CHASE + 2.0), Some(quarry));
-        assert_eq!(chase.letting_be(STERN_CHASE + 2.0 + LET_BE), None);
+        assert_eq!(chase.letting_be(TUNING.stern_chase + 2.0), Some(quarry));
+        assert_eq!(chase.letting_be(TUNING.stern_chase + 2.0 + LET_BE), None);
         assert!(
-            chase.keep_after(Some(other), STERN_CHASE + 2.0, RESTING_AT_SEA),
+            chase.keep_after(Some(other), TUNING.stern_chase + 2.0, RESTING_AT_SEA),
             "another is fair game"
         );
-        assert!(!chase.keep_after(None, STERN_CHASE + 3.0, RESTING_AT_SEA));
+        assert!(!chase.keep_after(None, TUNING.stern_chase + 3.0, RESTING_AT_SEA));
         assert!(
             chase.keep_after(
                 Some(other),
-                STERN_CHASE + 3.0 + LOST_SIGHT + 1.0,
+                TUNING.stern_chase + 3.0 + TUNING.lost_sight + 1.0,
                 RESTING_AT_SEA
             ),
             "a chase long lost from sight starts afresh"
         );
-        assert!(chase.keep_after(Some(other), 2.0 * STERN_CHASE, RESTING_AT_SEA));
+        assert!(chase.keep_after(Some(other), 2.0 * TUNING.stern_chase, RESTING_AT_SEA));
     }
 
     #[test]
     fn an_eager_crew_keeps_up_a_chase_longer_than_a_sullen_one() {
-        assert_eq!(patience(RESTING_AT_SEA), STERN_CHASE, "a steady crew");
+        assert_eq!(
+            patience(RESTING_AT_SEA),
+            TUNING.stern_chase,
+            "a steady crew"
+        );
         assert!(patience(90.0) > patience(RESTING_AT_SEA));
         assert!(patience(25.0) < patience(RESTING_AT_SEA));
-        assert_eq!(patience(0.0), PATIENCE[0]);
-        assert_eq!(patience(100.0), PATIENCE[1]);
+        assert_eq!(patience(0.0), TUNING.patience[0]);
+        assert_eq!(patience(100.0), TUNING.patience[1]);
         // A sullen crew gives up two hours in, where a steady one wouldn't.
         let quarry = Entity::from_raw_u32(1).unwrap();
         let mut chase = Chase::default();
@@ -361,7 +357,11 @@ mod tests {
         for minutes in 1..=120 {
             chase.keep_after(Some(quarry), f64::from(minutes) * 60.0, 20.0);
         }
-        assert_eq!(chase.letting_be(2.0 * HOUR), Some(quarry), "gave up");
+        assert_eq!(
+            chase.letting_be(2.0 * crate::clock::HOUR),
+            Some(quarry),
+            "gave up"
+        );
     }
 
     #[test]
@@ -370,7 +370,7 @@ mod tests {
         let mut chase = Chase::default();
         let mut now = 0.0;
         // In sight, then over the horizon, every twenty minutes.
-        while now <= STERN_CHASE {
+        while now <= TUNING.stern_chase {
             assert!(
                 chase.keep_after(Some(quarry), now, RESTING_AT_SEA),
                 "kept after her at {now}"
@@ -396,7 +396,7 @@ mod tests {
         let hunter = Vec3::ZERO;
         let at = Vec3::new(2_000.0, 0.0, 0.0);
         let bolt = evade(&sea, at, None, hunter).unwrap();
-        assert_eq!(bolt, Vec3::new(2_000.0 + SIGHTING_RANGE, 0.0, 0.0));
+        assert_eq!(bolt, Vec3::new(2_000.0 + sighting_range(), 0.0, 0.0));
         assert_eq!(evade(&sea, at, Some(bolt), hunter), None, "already running");
         assert!(
             evade(&sea, at, Some(Vec3::new(-50_000.0, 0.0, 0.0)), hunter).is_some(),
@@ -458,7 +458,7 @@ mod tests {
         world.spawn(warship(Nation::ENGLAND, 1_000.0));
         assert!(!hunted(&mut world), "England isn't at war with them yet");
         let spaniard = world
-            .spawn(warship(Nation::SPAIN, SIGHTING_RANGE * 2.0))
+            .spawn(warship(Nation::SPAIN, sighting_range() * 2.0))
             .id();
         assert!(!hunted(&mut world), "out of sight");
         world

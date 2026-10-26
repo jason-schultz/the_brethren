@@ -52,12 +52,14 @@ pub enum Control {
     Close,
     /// Show or hide each nation's sphere of influence on the sea.
     Influence,
+    /// Strike her colours to the enemy she's fighting.
+    Strike,
 }
 
 /// Every control that takes a key, in the order the controls sheet lists
 /// them. The settings file names controls by their place here, so new ones
 /// go at the end.
-pub const BINDABLE: [Control; 18] = [
+pub const BINDABLE: [Control; 19] = [
     Control::FirePort,
     Control::FireStarboard,
     Control::Board,
@@ -76,15 +78,17 @@ pub const BINDABLE: [Control; 18] = [
     Control::Open(Sheet::Controls),
     Control::Close,
     Control::Influence,
+    Control::Strike,
 ];
 
 /// The controls on the action bar, in order.
-pub const ACTION_BAR: [Control; 5] = [
+pub const ACTION_BAR: [Control; 6] = [
     Control::FirePort,
     Control::FireStarboard,
     Control::Board,
     Control::CycleBattleStyle,
     Control::FollowShip,
+    Control::Strike,
 ];
 
 /// The menu's buttons, in order.
@@ -115,6 +119,7 @@ impl Control {
             Self::Open(sheet) => sheet.name(),
             Self::Close => "Close",
             Self::Influence => "Influence",
+            Self::Strike => "Strike colours",
         }
     }
 
@@ -232,6 +237,7 @@ impl Default for Bindings {
             (Control::Open(Sheet::Nations), KeyCode::KeyN),
             (Control::Open(Sheet::Controls), KeyCode::F1),
             (Control::Influence, KeyCode::KeyM),
+            (Control::Strike, KeyCode::Digit6),
         ])
     }
 }
@@ -408,7 +414,7 @@ mod tests {
             .iter()
             .map(|&control| key_name(bindings.key(control).unwrap()))
             .collect();
-        assert_eq!(names, ["1", "2", "3", "4", "5"]);
+        assert_eq!(names, ["1", "2", "3", "4", "5", "6"]);
     }
 
     #[test]

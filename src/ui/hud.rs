@@ -600,6 +600,16 @@ fn battle_text(
     text
 }
 
+/// Where a captain with no one to row her boat was put ashore, if she was.
+fn put_ashore(ashore: Option<Entity>, name: impl Fn(Entity) -> String) -> String {
+    ashore.map_or(String::new(), |port| {
+        format!(
+            " With no one to row, we were picked up and put ashore at {}.",
+            name(port)
+        )
+    })
+}
+
 /// What the lookout or the bosun calls out for an alert. `name` names a
 /// ship, a port, or an officer.
 pub(super) fn describe(alert: Alert, goods: &Goods, name: impl Fn(Entity) -> String) -> String {
@@ -661,12 +671,13 @@ pub(super) fn describe(alert: Alert, goods: &Goods, name: impl Fn(Entity) -> Str
             None => "Mutiny! Some of the hands rose against us, but the loyal men put it down."
                 .to_string(),
         },
-        AlertKind::Mutiny { leader } => format!(
-            "Mutiny! {} taken the ship and set us adrift in the boat with the men who stood by us. Word of it will get around.",
+        AlertKind::Mutiny { leader, ashore } => format!(
+            "Mutiny! {} taken the ship and set us adrift in the boat with the men who stood by us.{} Word of it will get around.",
             leader.map_or("The hands have".to_string(), |role| format!(
                 "Our {} has",
                 role.name()
-            ))
+            )),
+            put_ashore(ashore, &name)
         ),
         AlertKind::Betrayed { role, port } => format!(
             "Soldiers were waiting on the quay at {}: our {} sold us out. The ship is seized, we've paid a heavy fine, and two of the men waited with a boat.",
@@ -759,13 +770,26 @@ pub(super) fn describe(alert: Alert, goods: &Goods, name: impl Fn(Entity) -> Str
                 "We've struck hard!"
             }
         ),
-        AlertKind::Wrecked { wreck } => format!(
-            "She's breaking up! We've taken to the boat with the men.{}",
+        AlertKind::Wrecked { wreck, ashore } => format!(
+            "She's going down! We've taken to the boat with the men.{}{}",
             wreck.map_or(String::new(), |wreck| format!(
                 " Her wreck lies in shallow water: {}.",
                 name(wreck)
-            ))
+            )),
+            put_ashore(ashore, &name)
         ),
+        AlertKind::Taken { by, ashore } => format!(
+            "{}'s boarders have taken the ship! They've put us in the boat with the men they spared.{}",
+            name(by),
+            put_ashore(ashore, &name)
+        ),
+        AlertKind::Abandoned { ashore } => format!(
+            "There's no one left to work her. We've taken to the boat and left her a derelict.{}",
+            put_ashore(ashore, &name)
+        ),
+        AlertKind::Leaking => {
+            "The water's gaining on the pumps! Make for a shipyard before she founders.".to_string()
+        }
         AlertKind::Salvaging { wreck } => format!(
             "Our divers are down on the {}. Lie hove to here and they'll bring up what they can.",
             name(wreck)
@@ -833,7 +857,8 @@ mod tests {
         assert!(
             describe(
                 alert(AlertKind::Mutiny {
-                    leader: Some(Role::FirstMate)
+                    leader: Some(Role::FirstMate),
+                    ashore: None,
                 }),
                 &goods,
                 name

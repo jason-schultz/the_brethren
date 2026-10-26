@@ -8,7 +8,7 @@ default-run = "false_colours"
 [workspace]
 # The game is the root package; `cargo run`, `test` and `build` mean it
 # alone. `--workspace` takes in the tools too.
-members = ["crates/chronicle", "tools/report"]
+members = ["crates/chronicle", "crates/tuning", "tools/report"]
 
 [workspace.package]
 edition = "2024"
@@ -16,6 +16,8 @@ rust-version = "1.99"
 
 [workspace.dependencies]
 chronicle = { path = "crates/chronicle" }
+ron = "0.12"
+tuning = { path = "crates/tuning" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -23,9 +25,10 @@ serde_json = "1"
 bevy = "0.20"
 chronicle.workspace = true
 earcut = "0.4"
-ron = "0.12"
+ron.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tuning.workspace = true
 
 [features]
 # Faster incremental builds during development: `cargo run --features dev`.

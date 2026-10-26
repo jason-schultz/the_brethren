@@ -48,9 +48,18 @@ ul.legend { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 4
 .swatch { display: inline-block; width: 12px; height: 12px; margin-right: 5px; vertical-align: -1px; }
 pre { white-space: pre-wrap; background: var(--rule); padding: 8px; }
 .wide { overflow-x: auto; }
+.entry { border-bottom: 1px solid var(--rule); padding: 8px 0 10px; }
+.entry h4 { margin: 0 0 4px; }
+.entry form { margin: 4px 0; }
+.entry input[type=number] { width: 7em; }
+.entry dl { margin: 4px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; }
+.entry dt { color: var(--faded); }
+.entry dd { margin: 0; }
+.good { color: #2e7d32; font-weight: 600; }
+.notice { padding: 6px 10px; border: 1px solid var(--rule); }
 "#;
 
-fn page(title: &str, body: Markup) -> Markup {
+pub(crate) fn page(title: &str, body: Markup) -> Markup {
     html! {
         (DOCTYPE)
         html lang="en" {
@@ -61,7 +70,7 @@ fn page(title: &str, body: Markup) -> Markup {
                 style { (PreEscaped(STYLE)) }
             }
             body {
-                nav { a href="/" { "Runs" } a href="/trend?kind=soak" { "Soak trend" } a href="/trend?kind=play" { "Play trend" } a href="/crashes" { "Crashes" } }
+                nav { a href="/" { "Runs" } a href="/trend?kind=soak" { "Soak trend" } a href="/trend?kind=play" { "Play trend" } a href="/crashes" { "Crashes" } a href="/tuning" { "Tuning" } }
                 (body)
             }
         }
@@ -268,6 +277,7 @@ pub fn run_page(
 
             h2 { "Battles" }
             (counts("How they ended", &report.battles.ends))
+            (counts("Ships lost, by cause", &report.battles.lost))
             (matchups("By class", &report.battles.by_class))
             (matchups("By role", &report.battles.by_role))
             @if !report.battles.list.is_empty() {

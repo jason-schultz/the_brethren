@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use bevy::ecs::query::QueryItem;
 use bevy::prelude::*;
-use chronicle::{Battle, BattleEnd, Record, Side, Spotted};
+use chronicle::{Battle, BattleEnd, Lost, Record, Side, Spotted};
 
 use super::{Chronicle, Harbours, Noting, Roles, place, role};
 use crate::clock::{DAY, WorldClock};
@@ -17,14 +17,21 @@ use crate::crew::Crew;
 use crate::factions::{Colours, Deed, DeedKind};
 use crate::hunting::Chase;
 use crate::sailing::Rigging;
+use crate::schedule::FrameSet;
 use crate::ship_class::ShipClass;
+use crate::wrecks::{Cause, Founder, GoingDown};
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Battles>()
         .add_observer(open_battle)
         .add_observer(strike)
         .add_observer(sink)
-        .add_systems(Last, (follow_chases, follow_battles).in_set(Noting));
+        .add_systems(Last, (follow_chases, follow_battles).in_set(Noting))
+        // Before she's gone from the world.
+        .add_systems(
+            Update,
+            note_losses.after(FrameSet::Orders).before(GoingDown),
+        );
 }
 
 /// The battles being fought.
@@ -177,6 +184,37 @@ fn follow_chases(
     }
 }
 
+/// What a cause of loss is called in the log.
+fn cause_name(cause: Cause) -> &'static str {
+    match cause {
+        Cause::Battle(_) => "sunk",
+        Cause::Burned(_) => "taken",
+        Cause::Grounding => "grounding",
+        Cause::Reef => "reef",
+        Cause::Foundered => "foundered",
+    }
+}
+
+/// Notes every ship going down: how, and what was left of her.
+fn note_losses(
+    mut founders: MessageReader<Founder>,
+    ships: Query<(Sighting, &Crew, &Timbers)>,
+    harbours: Harbours,
+    mut chronicle: ResMut<Chronicle>,
+) {
+    for &Founder { ship, cause } in founders.read() {
+        let Ok((sighting, crew, timbers)) = ships.get(ship) else {
+            continue;
+        };
+        chronicle.note(Record::Lost(Lost {
+            ship: spotted(sighting, &harbours),
+            cause: cause_name(cause).to_string(),
+            crew: crew.count,
+            timbers: timbers.0,
+        }));
+    }
+}
+
 /// Keeps each battle's sides up to date, marks ships taken, and notes each
 /// battle once neither ship is fighting the other.
 fn follow_battles(
@@ -268,6 +306,35 @@ mod tests {
             fight([Some(BattleEnd::Sunk), Some(BattleEnd::Struck)]).outcome(),
             (BattleEnd::Sunk, Some(0))
         );
+    }
+
+    #[test]
+    fn a_ship_going_down_is_noted_with_how_and_what_was_left_of_her() {
+        let mut app = noting_app(Run::Soak);
+        let dove = ship(&mut app, "Dove", Vec3::ZERO);
+        app.world_mut().get_mut::<Timbers>(dove).unwrap().0 = 0.0;
+        app.world_mut().write_message(Founder {
+            ship: dove,
+            cause: Cause::Foundered,
+        });
+        app.update();
+        let lost: Vec<Lost> = noted(&mut app)
+            .into_iter()
+            .filter_map(|record| match record {
+                Record::Lost(lost) => Some(lost),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(lost.len(), 1);
+        assert_eq!(
+            (
+                lost[0].ship.ship.as_str(),
+                lost[0].cause.as_str(),
+                lost[0].crew
+            ),
+            ("Dove", "foundered", 20)
+        );
+        assert!(app.world().get_entity(dove).is_err(), "and she's gone");
     }
 
     fn side_for_test() -> Side {

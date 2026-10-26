@@ -10,6 +10,7 @@
 //! boat, the men who stood by her, and a stained name.
 
 use bevy::ecs::system::SystemParam;
+use bevy::math::FloatOrd;
 use bevy::prelude::*;
 
 use crate::alert::{Alert, AlertKind, InSight};
@@ -17,7 +18,7 @@ use crate::cargo::Purse;
 use crate::clock::DAY;
 use crate::combat::FreeAtSea;
 use crate::combat::rounds::Dice;
-use crate::crew::Crew;
+use crate::crew::{Crew, sail_handling};
 use crate::economy::jobs::Carrier;
 use crate::factions::{
     CaptainRecord, Colours, Deed, DeedKind, Group, GroupKind, Nation, Standing, nations,
@@ -199,15 +200,53 @@ pub(crate) struct Captaincy<'w, 's> {
     prizes: Query<'w, 's, (Entity, &'static mut Prize, Option<&'static Docked>)>,
     officers: Query<'w, 's, (Entity, &'static Officer, &'static mut Berth)>,
     jobs: Query<'w, 's, (Entity, &'static Carrier)>,
+    ports: Query<'w, 's, (Entity, &'static Transform), With<Port>>,
     deeds: MessageWriter<'w, Deed>,
     pub commands: Commands<'w, 's>,
 }
 
 impl Captaincy<'_, '_> {
+    /// A boat for a captain set adrift at `at` with `hands` and `purse`.
+    /// With no one to row it, whoever picks her up puts her ashore at the
+    /// nearest port.
+    pub(crate) fn adrift(&self, at: Vec3, heading: f32, hands: u32, purse: u32) -> Boat {
+        let rowed = sail_handling(hands, ShipClass::boat().complement.min) > 0.0;
+        let landing = self
+            .ports
+            .iter()
+            .min_by_key(|(_, anchorage)| FloatOrd(anchorage.translation.distance(at)))
+            .filter(|_| !rowed);
+        Boat {
+            at: landing.map_or(at, |(_, anchorage)| anchorage.translation),
+            heading,
+            docked: landing.map(|(port, _)| port),
+            hands,
+            purse,
+        }
+    }
+
     /// Takes `ship` from the player, leaving her `boat`. Her prizes and loyal
     /// officers follow her into it, except prizes lying at `seized_at`; her
     /// contracts go with the ship. Word gets around. Returns the boat.
     pub(crate) fn lose(&mut self, ship: Entity, boat: Boat, seized_at: Option<Entity>) -> Entity {
+        let new = self.take_to_boat(ship, boat, seized_at);
+        self.commands.entity(ship).despawn();
+        new
+    }
+
+    /// The player leaves `ship`, with no one left aboard her, for her
+    /// `boat`, as when she's lost. The ship is left a derelict under no
+    /// colours, for anyone to board. Returns the boat.
+    pub(crate) fn abandon(&mut self, ship: Entity, boat: Boat) -> Entity {
+        let new = self.take_to_boat(ship, boat, None);
+        self.commands
+            .entity(ship)
+            .remove::<(Player, InSight, Colours)>();
+        new
+    }
+
+    /// Puts the player in `boat`, with what follows her from `ship`.
+    fn take_to_boat(&mut self, ship: Entity, boat: Boat, seized_at: Option<Entity>) -> Entity {
         let mut hold = ShipClass::boat().empty_hold();
         hold.owned.add(self.goods.provisions, BOAT_PROVISIONS);
         let mut spawned = self.commands.spawn((
@@ -249,8 +288,7 @@ impl Captaincy<'_, '_> {
         // Her name with the nations goes with her into the boat.
         self.commands
             .entity(ship)
-            .move_components::<CaptainRecord>(new)
-            .despawn();
+            .move_components::<CaptainRecord>(new);
         for nation in nations() {
             self.deeds.write(Deed {
                 doer: new,
@@ -307,18 +345,19 @@ fn mutiny(
     let loyal = free(Loyalty::Loyal).count() as u32;
     let rising = mutineers(crew.count, crew.morale);
     if mutiny_succeeds(crew.count, crew.morale, loyal) {
-        let boat = Boat {
-            at: at.translation,
-            heading: heading.0,
-            docked: None,
-            hands: crew.count - rising,
-            purse: (purse.0 as f64 * KEPT_ADRIFT) as u32,
-        };
+        let boat = captaincy.adrift(
+            at.translation,
+            heading.0,
+            crew.count - rising,
+            (purse.0 as f64 * KEPT_ADRIFT) as u32,
+        );
+        let ashore = boat.docked;
         let boat = captaincy.lose(ship, boat, None);
         alerts.write(Alert {
             ship: boat,
             kind: AlertKind::Mutiny {
                 leader: ringleader.map(|(_, role)| role),
+                ashore,
             },
         });
         return;
@@ -547,17 +586,9 @@ mod tests {
                 .expect("her name went with her")
                 .with(Nation::ENGLAND)
         };
-        assert_eq!(standing(&app), before, "no word of it yet");
-        // Word gets around once she makes port.
-        let port_royal = app
-            .world_mut()
-            .query_filtered::<Entity, With<Port>>()
-            .iter(app.world())
-            .next()
-            .unwrap();
-        app.world_mut()
-            .entity_mut(boat)
-            .insert(Docked { port: port_royal });
+        // Starving, every man rose, so no one was left to row her boat:
+        // she was put ashore at the nearest port, where word gets around.
+        assert!(app.world().get::<Docked>(boat).is_some(), "put ashore");
         crate::test_support::run_seconds(&mut app, 10.0);
         assert!(standing(&app) < before);
     }

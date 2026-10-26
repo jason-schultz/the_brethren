@@ -125,6 +125,8 @@ pub enum Record {
     Battle(Battle),
     /// A hunter went after a ship she'd sighted.
     Chase(Chase),
+    /// A ship went down.
+    Lost(Lost),
     /// How things stand, once a game day.
     Snapshot(Box<Snapshot>),
 }
@@ -297,7 +299,17 @@ pub struct Chase {
     pub km: f32,
 }
 
-/// A ship in a chase, and where she was.
+/// A ship going down: how, and what was left of her crew and hull.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Lost {
+    pub ship: Spotted,
+    /// "sunk", "taken", "grounding", "reef", or "foundered".
+    pub cause: String,
+    pub crew: u32,
+    pub timbers: f32,
+}
+
+/// A ship in a chase or lost, and where she was.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Spotted {
     pub ship: String,
@@ -554,7 +566,23 @@ mod tests {
                 km: 6.2,
             }),
         };
-        let lines = [header(FORMAT), note(1.0, "sailing is slow"), chase, battle];
+        let lost = Line {
+            day: 2.6,
+            real: 31.0,
+            record: Record::Lost(Lost {
+                ship: spotted("Dove", Role::Merchant),
+                cause: "foundered".into(),
+                crew: 2,
+                timbers: 0.0,
+            }),
+        };
+        let lines = [
+            header(FORMAT),
+            note(1.0, "sailing is slow"),
+            chase,
+            battle,
+            lost,
+        ];
         let log = read(&log_of(&lines)).unwrap();
         assert_eq!(log.run, Run::Soak);
         assert_eq!(log.seed, Some(7));

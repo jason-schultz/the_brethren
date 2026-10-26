@@ -1,0 +1,13 @@
+[package]
+name = "tuning"
+version = "0.1.0"
+description = "False Colours' knobs and balance targets, with hints on each: read by the game and soaks, edited from the logbook."
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ron.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

@@ -11,7 +11,7 @@ use bevy::prelude::*;
 
 use super::hud::{BAR, TEXT, show_text};
 use super::{Tales, calling, compass_point, stakes_line};
-use crate::alert::SIGHTING_RANGE;
+use crate::alert::sighting_range;
 use crate::allegiance::{Favour, stakes};
 use crate::camera::Pointer;
 use crate::combat::Battery;
@@ -84,6 +84,7 @@ fn select_ship(
     buttons: Res<ButtonInput<MouseButton>>,
     pointer: Pointer,
     hovered: Res<HoverMap>,
+    ui: Query<(), With<Node>>,
     at_sea: Query<(), (With<Player>, Without<Docked>)>,
     ships: Query<(Entity, &Transform), OthersUnderSail>,
     wrecks: Query<(Entity, &Transform), With<Wreck>>,
@@ -104,7 +105,7 @@ fn select_ship(
         .is_none_or(|from| from.distance(cursor) > CLICK_SLOP);
     let over_hud = hovered
         .get(&PointerId::Mouse)
-        .is_some_and(|hits| !hits.is_empty());
+        .is_some_and(|hits| over_ui(hits.keys(), &ui));
     if dragged || over_hud || at_sea.is_empty() {
         return;
     }
@@ -113,6 +114,12 @@ fn select_ship(
         .chain(&wrecks)
         .find(|(_, at)| pointer.near(at.translation))
         .map(|(ship, _)| ship);
+}
+
+/// Whether any of the entities under the pointer is part of the HUD. The
+/// window itself is always under it, and doesn't count.
+fn over_ui<'a>(hits: impl IntoIterator<Item = &'a Entity>, ui: &Query<(), With<Node>>) -> bool {
+    hits.into_iter().any(|&hit| ui.contains(hit))
 }
 
 fn put_the_glass_down(mut selected: ResMut<Selected>) {
@@ -198,7 +205,7 @@ fn wreck_text(name: &str, wreck: &Wreck, distance: f32, word: Option<String>) ->
         .map_or(String::new(), |nation| format!(", {}", nation.adjective()));
     let mut lines = vec![format!("{name}{whose}: {:.1} km off", distance / 1000.0)];
     lines.extend(word);
-    lines.push(if distance <= SIGHTING_RANGE {
+    lines.push(if distance <= sighting_range() {
         let tons: f64 = wreck.cargo.iter().map(|(_, tons)| tons).sum();
         format!(
             "About {tons:.0} t of cargo left{}. Right-click to lie over her and dive.",
@@ -339,6 +346,21 @@ fn show_card(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_window_under_the_pointer_is_not_the_hud() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let window = world.spawn(Window::default()).id();
+        let button = world.spawn(Node::default()).id();
+        let mut over = |hits: Vec<Entity>| {
+            world
+                .run_system_once(move |ui: Query<(), With<Node>>| over_ui(&hits, &ui))
+                .unwrap()
+        };
+        assert!(!over(vec![window]), "the window is always under it");
+        assert!(over(vec![window, button]));
+    }
 
     #[test]
     fn raiders_endanger_the_shipping_of_nations_hostile_to_them() {

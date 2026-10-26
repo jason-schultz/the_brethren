@@ -4,6 +4,7 @@
 use bevy::prelude::*;
 
 use crate::math::{angle_between, direction_to_heading};
+use crate::tuning::TUNING;
 
 /// Longest range a broadside is fired at, meters.
 pub const GUN_RANGE: f32 = 400.0;
@@ -15,11 +16,6 @@ pub const RELOAD: f32 = 30.0;
 /// at [`GUN_RANGE`].
 const POINT_BLANK_HIT: f32 = 0.8;
 const LONG_RANGE_HIT: f32 = 0.25;
-/// What one hit does to a sloop-sized ship: timbers and rigging lost (as
-/// fractions of sound), and men killed or wounded.
-const TIMBERS_PER_HIT: f32 = 0.012;
-const RIGGING_PER_HIT: f32 = 0.01;
-const MEN_PER_HIT: f64 = 0.35;
 
 /// One side of a ship's guns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,11 +67,13 @@ impl Damage {
     }
 }
 
+/// What `hits` do to a sloop-sized ship: timbers and rigging lost (as
+/// fractions of sound), and men killed or wounded, as tuned.
 pub fn damage(hits: f32) -> Damage {
     Damage {
-        timbers: hits * TIMBERS_PER_HIT,
-        rigging: hits * RIGGING_PER_HIT,
-        men: hits as f64 * MEN_PER_HIT,
+        timbers: hits * TUNING.timbers_per_hit,
+        rigging: hits * TUNING.rigging_per_hit,
+        men: hits as f64 * TUNING.men_per_hit,
     }
 }
 
